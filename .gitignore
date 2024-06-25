@@ -1,0 +1,11 @@
+data
+results
+notebooks
+*.log
+.*
+!/.gitignore
+*.pklz
+wandb
+__pycache__
+notebooks/test.ipynb
+rsna2024.egg-info
