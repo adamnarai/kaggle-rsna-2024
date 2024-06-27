@@ -1,6 +1,6 @@
 import albumentations as A
 
-class NoneAugment():
+class Normalize():
     def __init__(self):
         self.aug = A.Compose([A.Normalize(mean=0.5, std=0.5)])
 

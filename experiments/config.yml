@@ -1,11 +1,11 @@
 project_name: rsna-2024
 seed: 42
 debug: False
-deterministic: False
-benchmark: False
+deterministic: True
+benchmark: True
 
 # Wandb
-use_wandb: False
+use_wandb: True
 tags:
   - baseline
 notes: ''
@@ -27,13 +27,13 @@ data_loader:
   type: RSNADataLoader
   args:
     batch_size: 32
-    num_workers: 0
+    num_workers: 8
     pin_memory: True
     shuffle: True
 
 
 augmentation:
-  type: NoneAugment
+  type: Normalize
   args: {}
 
 optimizer:
@@ -56,7 +56,7 @@ trainer:
   cv_fold: 5
   one_fold: True
   freeze_epochs: 0
-  metrics: [accuracy]
+  metrics: []
 
 out_vars:
   - spinal_canal_stenosis_l1_l2

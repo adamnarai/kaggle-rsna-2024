@@ -137,14 +137,10 @@ class Runner(RunnerBase):
             wandb.log({'mean_best_metric': np.mean(best_metric_list)})
             wandb.finish()
 
-    def get_sample_batch(self, batch_num=1):
+    def get_sample_batch(self, batch_num=0):
         transforms = self.get_instance(module_aug, 'augmentation', self.cfg)
         data_loader = self.get_instance(module_data, 'data_loader', self.cfg, self.df, transforms, 'train', self.data_dir, self.cfg['out_vars'])
-        for i, (x, y) in enumerate(data_loader):
-            if i == batch_num:
-                return x, y
-
-
+        return data_loader.__getitem__(batch_num)
 
     def seed_everything(self):
         seed = self.cfg['seed']
