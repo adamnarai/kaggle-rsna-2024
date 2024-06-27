@@ -4,14 +4,18 @@ import numpy as np
 import pydicom
 import cv2
 
+import torch
+import torch.nn.functional as F
 from torch.utils.data import Dataset
 
 from rsna2024.utils import natural_sort
 
 class RSNA2024Dataset(Dataset):
-    def __init__(self, data_dir, transform=None):
-        self.df, self.df_series = self._load_df(data_dir)
+    def __init__(self, df, data_dir, out_vars, transform=None):
+        self.df = df
+        self.df_series = self.load_series_info(data_dir)
         self.img_dir = os.path.join(data_dir, 'train_images')
+        self.out_vars = out_vars
         self.transform = transform
 
     def __len__(self):
@@ -21,37 +25,34 @@ class RSNA2024Dataset(Dataset):
         row = self.df.iloc[idx]
         img_num = 10
         x = np.zeros((512, 512, img_num*3), dtype=np.uint8)
-        label = self.df.iloc[idx][1:].values
+        label = self.df[self.out_vars].iloc[idx].values
         label = np.nan_to_num(label.astype(float), nan=0).astype(np.int64)
 
         # Sagittal T1
-        x = self._add_series(x, row.study_id, 'Sagittal T1', img_num=img_num, offset=0)
-        x = self._add_series(x, row.study_id, 'Sagittal T2/STIR', img_num=img_num, offset=img_num)
-        x = self._add_series(x, row.study_id, 'Axial T2', img_num=img_num, offset=2*img_num)
+        x = self.add_series(x, row.study_id, 'Sagittal T1', img_num=img_num, offset=0)
+        x = self.add_series(x, row.study_id, 'Sagittal T2/STIR', img_num=img_num, offset=img_num)
+        x = self.add_series(x, row.study_id, 'Axial T2', img_num=img_num, offset=2*img_num)
 
         if self.transform:
-            image = self.transform(image=image)['image']
+            x = self.transform(x)
+
+        x = x.transpose(2, 0, 1)
 
         return x, label
     
-    def _load_df(self, data_dir):
-        df = pd.read_csv(os.path.join(data_dir, 'train.csv'), dtype={'study_id': 'str'})
-        pd.set_option('future.no_silent_downcasting', True)
-        df = df.replace({'Normal/Mild': 0, 'Moderate':1, 'Severe':2})
-        df_series = pd.read_csv(os.path.join(data_dir, 'train_series_descriptions.csv'), dtype={'study_id': 'str', 'series_id': 'str'})
+    def load_series_info(self, data_dir):
+        return pd.read_csv(os.path.join(data_dir, 'train_series_descriptions.csv'), dtype={'study_id': 'str', 'series_id': 'str'})
 
-        return df, df_series
-    
-    def _get_series_id(self, study_id, series_description):
+    def get_series_id(self, study_id, series_description):
         series_list = self.df_series[(self.df_series['study_id']==study_id) & (self.df_series['series_description']==series_description)]['series_id']
-        
-        if len(series_list) > 0:
-            return series_list.values[0]
-        else:
+
+        if len(series_list) == 0:
             return None
-        
-    def _add_series(self, x, study_id, series_description, img_num=10, offset=0, resolution=(512, 512)):
-        series_id = self._get_series_id(study_id, series_description)
+            
+        return series_list.values[0]
+  
+    def add_series(self, x, study_id, series_description, img_num=10, offset=0, resolution=(512, 512)):
+        series_id = self.get_series_id(study_id, series_description)
         if series_id is None:
             return x
         
