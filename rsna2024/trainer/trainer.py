@@ -122,6 +122,9 @@ class Trainer:
 
         valid_loss /= num_batches
 
+        if self.metric == 'loss':
+            metric = valid_loss
+
         return valid_loss, metric
     
     def save_state(self, filename):

@@ -65,7 +65,9 @@ class RSNA2024Dataset(Dataset):
 
         for i, filename in enumerate(file_list):
             ds = pydicom.dcmread(os.path.join(series_dir, filename))
-            img = cv2.convertScaleAbs(ds.pixel_array, alpha=(255.0/ds.WindowWidth), beta=-(ds.WindowCenter-0.5*ds.WindowWidth))
+            img = cv2.convertScaleAbs(ds.pixel_array, 
+                                      alpha=(255.0/ds.WindowWidth), 
+                                      beta=-(ds.WindowCenter-0.5*ds.WindowWidth))
             img = cv2.resize(img, resolution, interpolation=cv2.INTER_CUBIC)
             x[..., i + offset] = img
 
