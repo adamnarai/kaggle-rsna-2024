@@ -18,8 +18,8 @@ import rsna2024.data_loader.data_loaders as module_data
 class RunnerBase:
     def __init__(self, cfg):
         self.cfg = cfg
-        self.loss_fn = self.get_instance(nn, 'loss', cfg)
         self.device = self.get_device()
+        self.loss_fn = self.get_instance(nn, 'loss', cfg)
         self.data_dir = None
         self.df = None
         self.model_dir = None
@@ -28,7 +28,14 @@ class RunnerBase:
         return torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 
     def get_instance(self, module, name, cfg, *args):
-        return getattr(module, cfg[name]['type'])(*args, **cfg[name]['args'])
+
+        # Make list values torch.tensor
+        cfg_kvargs = cfg[name]['args'].copy()
+        for k, v in cfg_kvargs.items():
+            if isinstance(v, list):
+                cfg_kvargs[k] = torch.tensor(v).to(self.device)
+
+        return getattr(module, cfg[name]['type'])(*args, **cfg_kvargs)
 
     def init_wandb(self, project_name_prefix=''):
         wandb.login()
