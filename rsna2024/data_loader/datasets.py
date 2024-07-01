@@ -34,7 +34,7 @@ class RSNA2024Dataset(Dataset):
         x = self.add_series(x, row.study_id, 'Axial T2', img_num=img_num, offset=2*img_num)
 
         if self.transform:
-            x = self.transform(x)
+            x = self.transform(image=x)['image']
 
         x = x.transpose(2, 0, 1)
 

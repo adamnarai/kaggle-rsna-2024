@@ -36,6 +36,16 @@ class RunnerBase:
                 cfg_kvargs[k] = torch.tensor(v).to(self.device)
 
         return getattr(module, cfg[name]['type'])(*args, **cfg_kvargs)
+    
+    def seed_everything(self):
+        seed = self.cfg['seed']
+        random.seed(seed)
+        os.environ['PYTHONHASHSEED'] = str(seed)
+        np.random.seed(seed)
+        torch.manual_seed(seed)
+        torch.cuda.manual_seed(seed)
+        torch.backends.cudnn.deterministic = self.cfg['deterministic']
+        torch.backends.cudnn.benchmark = self.cfg['benchmark']
 
     def init_wandb(self, project_name_prefix=''):
         wandb.login()
@@ -78,7 +88,7 @@ class RunnerBase:
         optimizer = self.get_instance(optim, 'optimizer', self.cfg, model.parameters())
         scheduler = self.get_instance(optim.lr_scheduler, 'scheduler', self.cfg, optimizer)
 
-        transforms = self.get_instance(module_aug, 'augmentation', self.cfg)
+        transforms = self.get_instance(module_aug, 'augmentation', self.cfg).get_transform()
 
         train_loader = self.get_instance(module_data, 'data_loader', self.cfg, df_train, transforms, 'train', self.data_dir, self.cfg['out_vars'])
         valid_loader = self.get_instance(module_data, 'data_loader', self.cfg, df_valid, transforms, 'valid', self.data_dir, self.cfg['out_vars'])
@@ -144,17 +154,7 @@ class Runner(RunnerBase):
             wandb.log({'mean_best_metric': np.mean(best_metric_list)})
             wandb.finish()
 
-    def get_sample_batch(self, batch_num=0):
-        transforms = self.get_instance(module_aug, 'augmentation', self.cfg)
+    def get_sample_batch(self):
+        transforms = self.get_instance(module_aug, 'augmentation', self.cfg).get_transform()
         data_loader = self.get_instance(module_data, 'data_loader', self.cfg, self.df, transforms, 'train', self.data_dir, self.cfg['out_vars'])
-        return data_loader.__getitem__(batch_num)
-
-    def seed_everything(self):
-        seed = self.cfg['seed']
-        random.seed(seed)
-        os.environ['PYTHONHASHSEED'] = str(seed)
-        np.random.seed(seed)
-        torch.manual_seed(seed)
-        torch.cuda.manual_seed(seed)
-        torch.backends.cudnn.deterministic = self.cfg['deterministic']
-        torch.backends.cudnn.benchmark = self.cfg['benchmark']
+        return next(iter(data_loader))

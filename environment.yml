@@ -34,7 +34,6 @@ dependencies:
   # ML
   - scikit-learn == 1.5.0
   - scikit-image == 0.24.0
-  - albumentations == 1.4.1 # 1.4.10 failed using num_workers > 0
   
   # DL
   - pytorch == 2.3.1
@@ -44,5 +43,3 @@ dependencies:
 
   # MRI
   - pydicom == 2.4.4
-
-  # TODO fix pip install
