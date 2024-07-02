@@ -26,15 +26,23 @@ model:
 data_loader:
   type: RSNADataLoader
   args:
+    img_num: [10, 10, 10]
     batch_size: 32
     num_workers: 8
     pin_memory: True
     shuffle: True
 
 
-augmentation:
+train_transform:
+  type: Affine
+  args:
+    layer_num: 30
+
+valid_transform:
   type: Normalize
-  args: {}
+  args:
+    layer_num: 30
+
 
 optimizer:
   type: AdamW

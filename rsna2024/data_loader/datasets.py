@@ -3,6 +3,7 @@ import pandas as pd
 import numpy as np
 import pydicom
 import cv2
+cv2.setNumThreads(0)
 
 import torch
 import torch.nn.functional as F
@@ -11,32 +12,34 @@ from torch.utils.data import Dataset
 from rsna2024.utils import natural_sort
 
 class RSNA2024Dataset(Dataset):
-    def __init__(self, df, data_dir, out_vars, transform=None):
+    def __init__(self, df, data_dir, out_vars, img_num=(10, 10, 10), transform=None):
         self.df = df
         self.df_series = self.load_series_info(data_dir)
         self.img_dir = os.path.join(data_dir, 'train_images')
         self.out_vars = out_vars
         self.transform = transform
+        self.img_num = img_num
 
     def __len__(self):
         return len(self.df)
 
     def __getitem__(self, idx):
         row = self.df.iloc[idx]
-        img_num = 10
-        x = np.zeros((512, 512, img_num*3), dtype=np.uint8)
+        x = np.zeros((512, 512, sum(self.img_num)), dtype=np.uint8)
         label = self.df[self.out_vars].iloc[idx].values
         label = np.nan_to_num(label.astype(float), nan=0).astype(np.int64)
 
         # Sagittal T1
-        x = self.add_series(x, row.study_id, 'Sagittal T1', img_num=img_num, offset=0)
-        x = self.add_series(x, row.study_id, 'Sagittal T2/STIR', img_num=img_num, offset=img_num)
-        x = self.add_series(x, row.study_id, 'Axial T2', img_num=img_num, offset=2*img_num)
-
+        x = self.add_series(x, row.study_id, 'Sagittal T1', img_num=self.img_num[0], offset=0)
+        x = self.add_series(x, row.study_id, 'Sagittal T2/STIR', img_num=self.img_num[1], offset=self.img_num[0])
+        x = self.add_series(x, row.study_id, 'Axial T2', img_num=self.img_num[2], offset=sum(self.img_num[:2]))
+        
         if self.transform:
-            x = self.transform(image=x)['image']
-
-        x = x.transpose(2, 0, 1)
+            x = self.transform(x)
+        
+        # # Albumentations
+        # if self.transform:
+        #     x = self.transform(image=x)['image']
 
         return x, label
     
@@ -65,10 +68,10 @@ class RSNA2024Dataset(Dataset):
 
         for i, filename in enumerate(file_list):
             ds = pydicom.dcmread(os.path.join(series_dir, filename))
-            img = cv2.convertScaleAbs(ds.pixel_array, 
-                                      alpha=(255.0/ds.WindowWidth), 
-                                      beta=-(ds.WindowCenter-0.5*ds.WindowWidth))
+            img = ds.pixel_array.astype(np.float32)
+            img = cv2.normalize(img, None, alpha=0, beta=255, norm_type=cv2.NORM_MINMAX)
             img = cv2.resize(img, resolution, interpolation=cv2.INTER_CUBIC)
+
             x[..., i + offset] = img
 
         return x

@@ -5,9 +5,9 @@ from .datasets import RSNA2024Dataset
 
 class RSNADataLoader(DataLoader):
     def __init__(
-        self, df, transforms, phase, data_dir, out_vars, batch_size, shuffle, num_workers, pin_memory
+        self, df, transform, phase, data_dir, out_vars, img_num, batch_size, shuffle, num_workers, pin_memory
     ):
-        dataset = RSNA2024Dataset(df, data_dir, out_vars, transforms)
+        dataset = RSNA2024Dataset(df, data_dir, out_vars, img_num=img_num, transform=transform)
         if phase == 'train':
             pass
         elif phase == 'valid':

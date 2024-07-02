@@ -1,16 +1,31 @@
-import albumentations as A
-    
-class Normalize():
+# import albumentations as A
+from torchvision.transforms import v2
+import torch
+
+class TransformFactory():
     def __init__(self):
-        self.aug = A.Compose([A.Normalize(mean=0.5, std=0.5)])
-    
+        self.aug = None
+
     def get_transform(self):
         return self.aug
 
-class CoarseDropout():
-    def __init__(self, p=0.5):
-        coarse_dropout = A.CoarseDropout(max_holes=16, max_height=64, max_width=64, min_holes=1, min_height=8, min_width=8, p=p)
-        self.aug = A.Compose([coarse_dropout, A.Normalize(mean=0.5, std=0.5)])
-        
-    def get_transform(self):
-        return self.aug
+class NoAug(TransformFactory):
+    def __init__(self, layer_num):
+        self.aug = v2.Compose([v2.ToImage(), v2.ToDtype(torch.float32, scale=True)])
+
+class Normalize(TransformFactory):
+    def __init__(self, layer_num):
+        self.aug = v2.Compose([v2.ToImage(), v2.ToDtype(torch.float32, scale=True),
+                               v2.Normalize(mean=[0.5]*layer_num, std=[0.5]*layer_num)])
+
+class Elastic(TransformFactory):
+    def __init__(self, layer_num):
+        self.aug = v2.Compose([v2.ToImage(), v2.ToDtype(torch.float32, scale=True),
+                               v2.ElasticTransform(), 
+                               v2.Normalize(mean=[0.5]*layer_num, std=[0.5]*layer_num)])
+
+class Affine(TransformFactory):
+    def __init__(self, layer_num, p=0.5):
+        self.aug = v2.Compose([v2.ToImage(), v2.ToDtype(torch.float32, scale=True),
+                               v2.RandomAffine(degrees=10, translate=(0.1, 0.1), scale=(0.9, 1.1), shear=10),
+                               v2.Normalize(mean=[0.5]*layer_num, std=[0.5]*layer_num)])

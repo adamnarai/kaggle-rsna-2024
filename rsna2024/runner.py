@@ -32,7 +32,7 @@ class RunnerBase:
         # Make list values torch.tensor
         cfg_kvargs = cfg[name]['args'].copy()
         for k, v in cfg_kvargs.items():
-            if isinstance(v, list):
+            if k in ['weight'] and isinstance(v, list):
                 cfg_kvargs[k] = torch.tensor(v).to(self.device)
 
         return getattr(module, cfg[name]['type'])(*args, **cfg_kvargs)
@@ -49,7 +49,7 @@ class RunnerBase:
 
     def init_wandb(self, project_name_prefix=''):
         wandb.login()
-        run = wandb.init(project=f'{project_name_prefix}{self.cfg['project_name']}', config=self.cfg, tags=self.cfg['tags'], notes=self.cfg['notes'])
+        run = wandb.init(project='{}{}'.format(project_name_prefix, self.cfg['project_name']), config=self.cfg, tags=self.cfg['tags'], notes=self.cfg['notes'])
         return run
 
     def create_cv_splits(self):
@@ -88,10 +88,11 @@ class RunnerBase:
         optimizer = self.get_instance(optim, 'optimizer', self.cfg, model.parameters())
         scheduler = self.get_instance(optim.lr_scheduler, 'scheduler', self.cfg, optimizer)
 
-        transforms = self.get_instance(module_aug, 'augmentation', self.cfg).get_transform()
+        train_transform = self.get_instance(module_aug, 'train_transform', self.cfg).get_transform()
+        train_loader = self.get_instance(module_data, 'data_loader', self.cfg, df_train, train_transform, 'train', self.data_dir, self.cfg['out_vars'])
 
-        train_loader = self.get_instance(module_data, 'data_loader', self.cfg, df_train, transforms, 'train', self.data_dir, self.cfg['out_vars'])
-        valid_loader = self.get_instance(module_data, 'data_loader', self.cfg, df_valid, transforms, 'valid', self.data_dir, self.cfg['out_vars'])
+        valid_transform = self.get_instance(module_aug, 'valid_transform', self.cfg).get_transform()
+        valid_loader = self.get_instance(module_data, 'data_loader', self.cfg, df_valid, valid_transform, 'valid', self.data_dir, self.cfg['out_vars'])
 
         # Training
         trainer = Trainer(model, train_loader, valid_loader, self.loss_fn, optimizer, scheduler, self.device, 
@@ -123,7 +124,7 @@ class Runner(RunnerBase):
             run_name = 'debug'
         
         # Model dir
-        model_name = f'{self.cfg['project_name']}-{run_name}'
+        model_name = '{}-{}'.format(self.cfg['project_name'], run_name)
         self.create_model_dir(model_name)
 
         # Seed
@@ -155,6 +156,6 @@ class Runner(RunnerBase):
             wandb.finish()
 
     def get_sample_batch(self):
-        transforms = self.get_instance(module_aug, 'augmentation', self.cfg).get_transform()
-        data_loader = self.get_instance(module_data, 'data_loader', self.cfg, self.df, transforms, 'train', self.data_dir, self.cfg['out_vars'])
+        transform = self.get_instance(module_aug, 'train_transform', self.cfg).get_transform()
+        data_loader = self.get_instance(module_data, 'data_loader', self.cfg, self.df, transform, 'train', self.data_dir, self.cfg['out_vars'])
         return next(iter(data_loader))
