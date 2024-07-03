@@ -1,3 +1,6 @@
+import cv2
+cv2.setNumThreads(0)
+
 from rsna2024.runner import Runner
 from rsna2024.utils import load_config
 
