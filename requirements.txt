@@ -1,1 +1,2 @@
+albumentations==1.4.10
 -e .

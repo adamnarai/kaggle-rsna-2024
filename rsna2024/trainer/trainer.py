@@ -24,6 +24,7 @@ class Trainer:
         self.epoch_count = 0
         self.test_y = []
         self.test_pred = []
+        self.scaler = torch.cuda.amp.GradScaler()
 
     def train_epochs(self, num_epochs=None, validate=True):
         if num_epochs is not None:
@@ -71,25 +72,19 @@ class Trainer:
         
         train_loss = 0
         for batch in tqdm(self.train_dataloader, total=num_batches):
-            if len(batch) == 2:
-                X, y = batch
-                X, y = X.to(self.device, non_blocking=True), y.to(self.device, non_blocking=True)
-                pred = self.model(X)
-            elif len(batch) == 3:
-                X1, X2, y = batch
-                X1, X2, y = X1.to(self.device, non_blocking=True), X2.to(self.device, non_blocking=True), y.to(self.device, non_blocking=True)
-                pred = self.model(X1, X2)
-            elif len(batch) == 4:
-                X1, X2, X3, y = batch
-                X1, X2, X3, y = X1.to(self.device, non_blocking=True), X2.to(self.device, non_blocking=True), X3.to(self.device, non_blocking=True), y.to(self.device, non_blocking=True)
-                pred = self.model(X1, X2, X3)
-
-            # Compute prediction error
-            loss = self.loss_fn(torch.unflatten(pred, 1, [3, 25]), y)
+            self.optimizer.zero_grad()
+            *X, y = batch
+            X = [x.to(self.device, non_blocking=True) for x in X]
+            y = y.to(self.device, non_blocking=True)
+            
+            with torch.cuda.amp.autocast():
+                pred = self.model(*X)
+                loss = self.loss_fn(torch.unflatten(pred, 1, [3, 25]), y)
 
             # Backpropagation
-            loss.backward()
-            self.optimizer.step()
+            self.scaler.scale(loss).backward()
+            self.scaler.step(self.optimizer)
+            self.scaler.update()
             self.optimizer.zero_grad()
 
             train_loss += loss.item()

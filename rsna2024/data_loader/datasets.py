@@ -4,7 +4,6 @@ import numpy as np
 import pydicom
 import cv2
 
-import torch
 import torch.nn.functional as F
 from torch.utils.data import Dataset
 
@@ -34,7 +33,7 @@ class RSNA2024Dataset(Dataset):
         x = np.concatenate([x1, x2, x3], axis=2)
         
         if self.transform:
-            x = self.transform(x)
+            x = self.transform(image=x)['image']
 
         return x, label
     
@@ -73,7 +72,7 @@ class RSNA2024Dataset(Dataset):
         x = (x - x.mean()) / x.std()
 
         return x
-    
+
 class RSNA2024SplitDataset(RSNA2024Dataset):
     def __init__(self, df, data_dir, out_vars, img_num, transform=None):
         super().__init__(df, data_dir, out_vars, img_num, transform)
@@ -89,8 +88,8 @@ class RSNA2024SplitDataset(RSNA2024Dataset):
         x3 = self.get_series(row.study_id, 'Axial T2', img_num=self.img_num[2])
         
         if self.transform:
-            x1 = self.transform(x1)
-            x2 = self.transform(x2)
-            x3 = self.transform(x3)
+            x1 = self.transform(image=x1)['image']
+            x2 = self.transform(image=x2)['image']
+            x3 = self.transform(image=x3)['image']
 
         return x1, x2, x3, label

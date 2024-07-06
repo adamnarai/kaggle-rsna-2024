@@ -15,43 +15,30 @@ labels:
   Moderate: 1
   Severe: 2
 
-# model:
-#   type: RSNABaseline
-#   args:
-#     base_model: efficientnet_b0
-#     num_classes: 75
-#     in_channels: 30
-#     pretrained: True
-
-# data_loader:
-#   type: RSNADataLoader
-#   args:
-#     img_num: [10, 10, 10]
-#     batch_size: 16
-#     num_workers: 8
-#     pin_memory: True
-#     shuffle: True
-
 model:
   type: RSNASplit
   args:
     base_model: efficientnet_b0
     num_classes: 75
-    in_channels: [10, 10, 10]
+    in_channels: [8, 8, 8]
     pretrained: True
 
 data_loader:
   type: RSNASplitDataLoader
   args:
-    img_num: [10, 10, 10]
+    img_num: [8, 8, 8]
     batch_size: 16
     num_workers: 8
     pin_memory: True
     shuffle: True
 
 train_transform:
-  type: Affine
-  args: {}
+  type: Elastic
+  args:
+    p: 1.0
+    alpha: 1
+    sigma: 2
+    alpha_affine: 20
 
 valid_transform:
   type: NoAug
