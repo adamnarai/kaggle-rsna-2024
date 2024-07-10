@@ -96,7 +96,7 @@ class RunnerBase:
 
         # Training
         trainer = Trainer(model, train_loader, valid_loader, self.loss_fn, optimizer, scheduler, self.device, 
-                          num_epochs=self.cfg['trainer']['epochs'], state_filename=state_filename, metric=self.cfg['trainer']['metrics'], wandb_log=self.cfg['use_wandb'])
+                          num_epochs=self.cfg['trainer']['epochs'], state_filename=state_filename, metrics=self.cfg['trainer']['metrics'], wandb_log=self.cfg['use_wandb'])
         trainer.train_epochs(num_epochs=self.cfg['trainer']['epochs'], validate=validate)
         trainer.save_state(state_filename)
 
@@ -137,21 +137,21 @@ class Runner(RunnerBase):
         # Save config
         self.save_config()
 
-        metric_list = []
+        last_metric_list = []
         best_metric_list = []
         for cv, (df_train, df_valid) in enumerate(splits):
             print(f"Cross-validation fold {cv+1}/{self.cfg['trainer']['cv_fold']}")
             state_filename = os.path.join(self.model_dir, f'{model_name}-cv{cv+1}.pt')
             trainer = self.train_model(df_train, df_valid, state_filename)
             best_metric_list.append(trainer.best_metric)
-            metric_list.append(trainer.last_metric)
+            last_metric_list.append(trainer.last_metric)
             if self.cfg['use_wandb']:
                 wandb.log({f'metric_cv{cv+1}': trainer.last_metric})
                 wandb.log({f'best_metric_cv{cv+1}': trainer.best_metric})
             if self.cfg['trainer']['one_fold']:
                 break
         if self.cfg['use_wandb']:
-            wandb.log({'mean_metric': np.mean(metric_list)})
+            wandb.log({'mean_metric': np.mean(last_metric_list)})
             wandb.log({'mean_best_metric': np.mean(best_metric_list)})
             wandb.finish()
 
