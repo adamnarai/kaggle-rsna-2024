@@ -40,6 +40,7 @@ class Trainer:
             if validate:
                 test_loss, metrics = self.valid()
                 main_metric = metrics[self.metrics[0]]
+                self.last_metric = main_metric
                 if main_metric < self.best_metric:
                     self.best_metric = main_metric
                     print(f"New best loss: {self.best_metric:.4f}\nSaving model to {self.state_filename}")
@@ -137,6 +138,9 @@ class Trainer:
                     metrics['loss1'] += loss1.item()
                 if 'loss2' in metrics.keys():
                     metrics['loss2'] += loss2.item()
+
+        if 'loss' in metrics.keys():
+            metrics['loss'] = valid_loss
 
         valid_loss /= num_batches
         for m in metrics:
