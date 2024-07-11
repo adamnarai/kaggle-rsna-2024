@@ -90,7 +90,9 @@ class RSNA2024Dataset(Dataset):
         
         return x
     
-    def get_series_with_coord(self, study_id, series_description, img_num):
+    def get_series_with_coord(self, study_id, series_description, img_num, kpmap=False):
+        if kpmap:
+            img_num += 1
         x = np.zeros((*self.resolution, img_num), dtype=np.float32)
         study_coord = self.df_coordinates[self.df_coordinates['study_id']==study_id]
         series_coord = study_coord[study_coord['series_description']==series_description]
@@ -132,6 +134,13 @@ class RSNA2024Dataset(Dataset):
 
         # Standardize series
         x = (x - x.mean()) / x.std()
+
+        if kpmap:
+            keypoint_img = np.zeros(self.resolution, dtype=np.float32)
+            for x_kp, y_kp in keypoints:
+                x_kp, y_kp = int(x_kp), int(y_kp)
+                cv2.circle(keypoint_img, (x_kp, y_kp), 20, 1, -1)
+            x[..., -1] = keypoint_img
         
         return x, keypoints
 
@@ -177,3 +186,39 @@ class RSNA2024SplitCoordDataset(RSNA2024Dataset):
             keypoints /= self.resolution[0]
 
         return x1, x2, x3, (label, keypoints)
+    
+class RSNA2024SplitBestseriesDataset(RSNA2024SplitCoordDataset):
+    def __getitem__(self, idx):
+        row = self.df.iloc[idx]
+        label = self.df[self.out_vars].iloc[idx].values
+        label = np.nan_to_num(label.astype(float), nan=0).astype(np.int64)
+
+        # Sagittal T1
+        x1, _ = self.get_series_with_coord(row.study_id, 'Sagittal T1', img_num=self.img_num[0])
+        x2, _ = self.get_series_with_coord(row.study_id, 'Sagittal T2/STIR', img_num=self.img_num[1])
+        x3, _ = self.get_series_with_coord(row.study_id, 'Axial T2', img_num=self.img_num[2])
+        
+        if self.transform:
+            x1 = self.transform(image=x1)['image']
+            x2 = self.transform(image=x2)['image']
+            x3 = self.transform(image=x3)['image']
+
+        return x1, x2, x3, label
+    
+class RSNA2024SplitKpmapDataset(RSNA2024Dataset):
+    def __getitem__(self, idx):
+        row = self.df.iloc[idx]
+        label = self.df[self.out_vars].iloc[idx].values
+        label = np.nan_to_num(label.astype(float), nan=0).astype(np.int64)
+
+        # Sagittal T1
+        x1, _ = self.get_series_with_coord(row.study_id, 'Sagittal T1', img_num=self.img_num[0], kpmap=True)
+        x2, _ = self.get_series_with_coord(row.study_id, 'Sagittal T2/STIR', img_num=self.img_num[1], kpmap=True)
+        x3, _ = self.get_series_with_coord(row.study_id, 'Axial T2', img_num=self.img_num[2], kpmap=True)
+        
+        if self.transform:
+            x1 = self.transform(image=x1)['image']
+            x2 = self.transform(image=x2)['image']
+            x3 = self.transform(image=x3)['image']
+
+        return x1, x2, x3, label,
