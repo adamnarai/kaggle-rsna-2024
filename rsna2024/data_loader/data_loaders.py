@@ -4,7 +4,6 @@ from .datasets import (
     RSNA2024Dataset,
     RSNA2024SplitDataset,
     RSNA2024SplitCoordDataset,
-    RSNA2024SplitBestseriesDataset,
     RSNA2024SplitKpmapDataset,
 )
 
@@ -50,10 +49,6 @@ class RSNASplitCoordDataLoader(BaseRSNADataLoader):
     def __init__(self, *args, **kwargs):
         super().__init__(RSNA2024SplitCoordDataset, *args, **kwargs)
 
-
-class RSNASplitBestseriesDataLoader(BaseRSNADataLoader):
-    def __init__(self, *args, **kwargs):
-        super().__init__(RSNA2024SplitBestseriesDataset, *args, **kwargs)
 
 
 class RSNASplitKpmapDataLoader(BaseRSNADataLoader):

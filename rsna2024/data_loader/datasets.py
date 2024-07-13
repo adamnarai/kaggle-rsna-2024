@@ -98,7 +98,7 @@ class RSNA2024Dataset(Dataset):
         series_coord = study_coord[study_coord['series_description']==series_description]
         series_coord = series_coord.sort_values(by=['row_id'], 
             key=lambda column: column.map(lambda e: self.out_vars.index(e))).reset_index(drop=True)
-        series_id = series_coord['series_id'].unique()
+        series_list = series_coord['series_id'].unique().tolist()
 
         # Keypoints
         if series_description == 'Sagittal T1':
@@ -112,11 +112,11 @@ class RSNA2024Dataset(Dataset):
         keypoints = list(zip(series_coord_padded['x_norm'].values * self.resolution[0], 
                              series_coord_padded['y_norm'].values * self.resolution[1]))
         
-        if len(series_id) == 0:
+        if len(series_list) == 0:
             return x, keypoints
         
-        # If multiple series, get the one with the most coordinates
-        series_id = series_coord['series_id'].value_counts().sort_values(ascending=False).index[0]
+        # If multiple series, get one randomly
+        series_id = random.sample(series_list, 1)[0]
 
         series_dir = os.path.join(self.img_dir, study_id, series_id)
         file_list = natural_sort(os.listdir(series_dir))
@@ -187,24 +187,6 @@ class RSNA2024SplitCoordDataset(RSNA2024Dataset):
 
         return x1, x2, x3, (label, keypoints)
     
-class RSNA2024SplitBestseriesDataset(RSNA2024SplitCoordDataset):
-    def __getitem__(self, idx):
-        row = self.df.iloc[idx]
-        label = self.df[self.out_vars].iloc[idx].values
-        label = np.nan_to_num(label.astype(float), nan=0).astype(np.int64)
-
-        # Sagittal T1
-        x1, _ = self.get_series_with_coord(row.study_id, 'Sagittal T1', img_num=self.img_num[0])
-        x2, _ = self.get_series_with_coord(row.study_id, 'Sagittal T2/STIR', img_num=self.img_num[1])
-        x3, _ = self.get_series_with_coord(row.study_id, 'Axial T2', img_num=self.img_num[2])
-        
-        if self.transform:
-            x1 = self.transform(image=x1)['image']
-            x2 = self.transform(image=x2)['image']
-            x3 = self.transform(image=x3)['image']
-
-        return x1, x2, x3, label
-    
 class RSNA2024SplitKpmapDataset(RSNA2024Dataset):
     def __getitem__(self, idx):
         row = self.df.iloc[idx]
@@ -221,4 +203,4 @@ class RSNA2024SplitKpmapDataset(RSNA2024Dataset):
             x2 = self.transform(image=x2)['image']
             x3 = self.transform(image=x3)['image']
 
-        return x1, x2, x3, label,
+        return x1, x2, x3, label
