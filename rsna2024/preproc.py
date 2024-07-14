@@ -19,11 +19,12 @@ df['row_id'] = condition + '_' + level
 def normalize(s):
     dcm_folder = os.path.join(raw_data_dir, 'train_images', s.study_id, s.series_id)
     dcm_files = os.listdir(dcm_folder)
-    if len(dcm_files) == 0:
+    file_num = len(dcm_files)
+    if file_num == 0:
         return [np.nan, np.nan]
     ds = pydicom.dcmread(os.path.join(dcm_folder, dcm_files[0]))
-    return [s.x/ds.Columns, s.y/ds.Rows]
+    return [s.x/ds.Columns, s.y/ds.Rows, s.instance_number/file_num, file_num]
 
-df[['x_norm', 'y_norm']] = df.apply(normalize, axis=1, result_type='expand')
+df[['x_norm', 'y_norm', 'instance_number_norm', 'file_num']] = df.apply(normalize, axis=1, result_type='expand')
 
 df.to_csv(out_path, index=False)
