@@ -9,8 +9,8 @@ from torch.utils.data import Dataset
 
 from rsna2024.utils import natural_sort
 
-class RSNA2024Dataset(Dataset):
-    def __init__(self, df, data_dir, out_vars, img_num, resolution=(512, 512), transform=None):
+class RSNADataset(Dataset):
+    def __init__(self, df, data_dir, out_vars, img_num, resolution, transform=None):
         self.df = df
         self.df_series = self.load_series_info(data_dir)
         self.df_coordinates = self.load_coordinates_info(data_dir).merge(self.df_series, how='left', on=['study_id', 'series_id'])
@@ -144,7 +144,7 @@ class RSNA2024Dataset(Dataset):
         
         return x, keypoints
 
-class RSNA2024SplitDataset(RSNA2024Dataset):
+class RSNASplitDataset(RSNADataset):
     def __getitem__(self, idx):
         row = self.df.iloc[idx]
         label = self.df[self.out_vars].iloc[idx].values
@@ -162,7 +162,7 @@ class RSNA2024SplitDataset(RSNA2024Dataset):
 
         return x1, x2, x3, label
     
-class RSNA2024SplitCoordDataset(RSNA2024Dataset):
+class RSNASplitCoordDataset(RSNADataset):
     def __getitem__(self, idx):
         row = self.df.iloc[idx]
         label = self.df[self.out_vars].iloc[idx].values
@@ -187,7 +187,7 @@ class RSNA2024SplitCoordDataset(RSNA2024Dataset):
 
         return x1, x2, x3, (label, keypoints)
     
-class RSNA2024SplitKpmapDataset(RSNA2024Dataset):
+class RSNASplitKpmapDataset(RSNADataset):
     def __getitem__(self, idx):
         row = self.df.iloc[idx]
         label = self.df[self.out_vars].iloc[idx].values
@@ -204,3 +204,70 @@ class RSNA2024SplitKpmapDataset(RSNA2024Dataset):
             x3 = self.transform(image=x3)['image']
 
         return x1, x2, x3, label
+
+
+class RSNAMilSplitDataset(RSNADataset):
+    def __getitem__(self, idx):
+        row = self.df.iloc[idx]
+        label = self.df[self.out_vars].iloc[idx].values
+        label = np.nan_to_num(label.astype(float), nan=0).astype(np.int64)
+
+        # Sagittal T1
+        x1 = self.get_full_series(row.study_id, 'Sagittal T1')
+        x2 = self.get_full_series(row.study_id, 'Sagittal T2/STIR')
+        x3 = self.get_full_series(row.study_id, 'Axial T2')
+        x1 = self.get_instances(x1, self.img_num[0], ch_num=5)
+        x2 = self.get_instances(x2, self.img_num[1], ch_num=5)
+        x3 = self.get_instances(x3, self.img_num[2], ch_num=5)
+        
+        if self.transform:
+            x1 = self.transform(image=x1)['image']
+            x2 = self.transform(image=x2)['image']
+            x3 = self.transform(image=x3)['image']
+
+        return x1, x2, x3, label
+    
+    def get_full_series(self, study_id, series_description):
+        series_id = self.get_series_id(study_id, series_description)
+        if series_id is None:
+            return None
+
+        series_dir = os.path.join(self.img_dir, study_id, series_id)
+        file_list = natural_sort(os.listdir(series_dir))
+
+        img_list = []
+        for filename in file_list:
+            ds = pydicom.dcmread(os.path.join(series_dir, filename))
+            img = ds.pixel_array.astype(np.float32)
+            img = cv2.resize(img, self.resolution, interpolation=cv2.INTER_CUBIC)
+
+            img_list.append(img)
+        x = np.stack(img_list, axis=2)
+
+        # Standardize series
+        x = (x - x.mean()) / x.std()
+        
+        return x
+    
+    def get_instances(self, x, img_num, ch_num):
+        if x is None:
+            return np.zeros((*self.resolution, img_num*ch_num), dtype=np.float32)
+        offset = ch_num // 2
+        slice_num = x.shape[-1]
+        step = slice_num / (img_num + 1)
+        st = step / 2.0
+        end = slice_num - 1 - step / 2.0
+        idx_list = np.linspace(st, end, img_num).astype(int)
+
+        instances = []
+        for i in idx_list:
+            if i-offset < 0:
+                start_idx = abs(i-offset)
+            else:
+                start_idx = 0
+            data = x[..., max(0, i-offset):min(slice_num, i+offset+1)]
+            end_idx = start_idx + data.shape[-1]
+            instance = np.zeros((*x.shape[:-1], ch_num), dtype=np.float32)
+            instance[..., start_idx:end_idx] = data
+            instances.append(instance)
+        return np.concatenate(instances, axis=2)
