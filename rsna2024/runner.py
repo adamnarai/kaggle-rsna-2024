@@ -16,10 +16,11 @@ import rsna2024.data_loader.data_loaders as module_data
 
 
 class RunnerBase:
-    def __init__(self, cfg):
+    def __init__(self, cfg, model_name=None):
         self.cfg = cfg
         self.device = self.get_device()
         self.loss_fn = self.get_instance(nn, 'loss', cfg)
+        self.model_name = model_name
         self.data_dir = None
         self.df = None
         self.model_dir = None
@@ -74,6 +75,15 @@ class RunnerBase:
         df = df.sort_values(by=['fold', 'split']).reset_index(drop=True)
         df.to_csv(os.path.join(self.model_dir, 'splits.csv'), index=False)
 
+    def load_splits(self):
+        df = pd.read_csv(os.path.join(self.model_dir, 'splits.csv'), dtype={'study_id': 'str'})
+        splits = []
+        for i in range(1, self.cfg['trainer']['cv_fold'] + 1):
+            df_train = df[(df['fold'] == i) & (df['split'] == 'train')].drop(columns=['fold', 'split'])
+            df_valid = df[(df['fold'] == i) & (df['split'] == 'validation')].drop(columns=['fold', 'split'])
+            splits.append((df_train, df_valid))
+        return splits
+
     def save_config(self):
         assert os.path.exists(self.model_dir)
         with open(os.path.join(self.model_dir, 'config.json'), 'w', encoding='utf-8') as f:
@@ -101,11 +111,24 @@ class RunnerBase:
         trainer.save_state(state_filename)
 
         return trainer
+    
+    def validate_model(self, df_valid, state_filename):
+        model = self.get_instance(module_model, 'model', self.cfg).to(self.device)
+
+        valid_transform = self.get_instance(module_aug, 'valid_transform', self.cfg).get_transform()
+        valid_loader = self.get_instance(module_data, 'data_loader', self.cfg, df_valid, valid_transform, 'valid', self.data_dir, self.cfg['out_vars'])
+
+        # Training
+        trainer = Trainer(model, None, valid_loader, self.loss_fn, device=self.device, metrics=self.cfg['trainer']['metrics'])
+        trainer.load_state(state_filename)
+        valid_loss, metrics = trainer.validate()
+
+        return valid_loss, metrics
 
 
 class Runner(RunnerBase):
-    def __init__(self, cfg):
-        super().__init__(cfg)
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
         self.data_dir = os.path.join(self.cfg['root'], 'data', 'raw')
         self.df = self.load_data(self.data_dir)
 
@@ -124,8 +147,8 @@ class Runner(RunnerBase):
             run_name = 'debug'
         
         # Model dir
-        model_name = '{}-{}'.format(self.cfg['project_name'], run_name)
-        self.create_model_dir(model_name)
+        self.model_name = '{}-{}'.format(self.cfg['project_name'], run_name)
+        self.create_model_dir(self.model_name)
 
         # Seed
         self.seed_everything()
@@ -141,7 +164,7 @@ class Runner(RunnerBase):
         best_metric_list = []
         for cv, (df_train, df_valid) in enumerate(splits):
             print(f"Cross-validation fold {cv+1}/{self.cfg['trainer']['cv_fold']}")
-            state_filename = os.path.join(self.model_dir, f'{model_name}-cv{cv+1}.pt')
+            state_filename = os.path.join(self.model_dir, f'{self.model_name}-cv{cv+1}.pt')
             trainer = self.train_model(df_train, df_valid, state_filename)
             best_metric_list.append(trainer.best_metric)
             last_metric_list.append(trainer.last_metric)
@@ -154,6 +177,33 @@ class Runner(RunnerBase):
             wandb.log({'mean_metric': np.mean(last_metric_list)})
             wandb.log({'mean_best_metric': np.mean(best_metric_list)})
             wandb.finish()
+
+    def validate(self, state_type='best'):
+        self.model_dir = os.path.join(self.cfg['root'], 'models', self.model_name)
+
+        # Seed
+        self.seed_everything()
+
+        # Cross-validation validation splits
+        splits = self.load_splits()
+
+        metric_list = []
+        for cv, (_, df_valid) in enumerate(splits):
+            print(f'Cross-validation fold {cv+1}/{self.cfg['trainer']['cv_fold']}')
+            if state_type == 'best':
+                state_filename_suffix = '_best'
+            elif state_type == 'last':
+                state_filename_suffix = ''
+            else:
+                raise ValueError('state_type must be "best" or "last"')
+            state_filename = os.path.join(self.model_dir, f'{self.model_name}-cv{cv+1}{state_filename_suffix}.pt')
+            valid_loss, metrics = self.validate_model(df_valid, state_filename)
+            metric_list.append(metrics)
+            print(f'valid loss: {valid_loss:.4f}, {metrics}\n')
+
+            if self.cfg['trainer']['one_fold']:
+                break
+        return metric_list
 
     def get_sample_batch(self):
         transform = self.get_instance(module_aug, 'train_transform', self.cfg).get_transform()

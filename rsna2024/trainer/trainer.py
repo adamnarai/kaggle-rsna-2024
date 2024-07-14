@@ -8,7 +8,7 @@ from torch import nn
 import wandb
 
 class Trainer:
-    def __init__(self, model, train_loader, valid_loader, loss_fn, optimizer, scheduler, device, state_filename, metrics, num_epochs, wandb_log=False):
+    def __init__(self, model, train_loader, valid_loader, loss_fn, optimizer=None, scheduler=None, device=None, state_filename=None, metrics=None, num_epochs=None, wandb_log=False):
         self.model = model
         self.train_dataloader = train_loader
         self.valid_dataloader = valid_loader
@@ -38,7 +38,7 @@ class Trainer:
 
             train_loss = self.train()
             if validate:
-                test_loss, metrics = self.valid()
+                test_loss, metrics = self.validate()
                 main_metric = metrics[self.metrics[0]]
                 self.last_metric = main_metric
                 if main_metric < self.best_metric:
@@ -88,11 +88,11 @@ class Trainer:
                 pred = self.model(*X)
                 if coord_regr:
                     pred, regr = pred
-                    loss1 = self.loss_fn(torch.unflatten(pred, 1, [3, 25]), y[0])
+                    loss1 = self.loss_fn(torch.unflatten(pred, 1, [3, -1]), y[0])
                     loss2 = nn.MSELoss()(regr, y[1])
                     loss = loss1 + loss2
                 else:
-                    loss = self.loss_fn(torch.unflatten(pred, 1, [3, 25]), y)
+                    loss = self.loss_fn(torch.unflatten(pred, 1, [3, -1]), y)
 
 
             # Backpropagation
@@ -107,7 +107,7 @@ class Trainer:
 
         return train_loss
 
-    def valid(self):
+    def validate(self):
         num_batches = len(self.valid_dataloader)
         self.model.eval()
         
@@ -126,11 +126,11 @@ class Trainer:
                 pred = self.model(*X)
                 if coord_regr:
                     pred, regr = pred
-                    loss1 = self.loss_fn(torch.unflatten(pred, 1, [3, 25]), y[0])
+                    loss1 = self.loss_fn(torch.unflatten(pred, 1, [3, -1]), y[0])
                     loss2 = nn.MSELoss()(regr, y[1])
                     loss = loss1 + loss2
                 else:
-                    loss = self.loss_fn(torch.unflatten(pred, 1, [3, 25]), y)
+                    loss = self.loss_fn(torch.unflatten(pred, 1, [3, -1]), y)
 
                 valid_loss += loss.item()
 

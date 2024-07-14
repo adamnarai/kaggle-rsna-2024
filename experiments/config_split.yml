@@ -31,14 +31,12 @@ data_loader:
     num_workers: 8
     pin_memory: True
     shuffle: True
+    resolution: [512, 512]
 
 train_transform:
-  type: Elastic
+  type: Affine
   args: 
     p: 1.0
-    alpha: 3
-    sigma: 50
-    alpha_affine: 50
 
 valid_transform:
   type: NoAug
