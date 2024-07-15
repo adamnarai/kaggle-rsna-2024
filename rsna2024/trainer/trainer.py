@@ -138,6 +138,14 @@ class Trainer:
                     metrics['loss1'] += loss1.item()
                 if 'loss2' in metrics.keys():
                     metrics['loss2'] += loss2.item()
+                if 'detailed_loss' in metrics.keys():
+                    weights = torch.tensor([1.0, 2.0, 4.0]).to(self.device)
+                    detailed_loss_fn = nn.CrossEntropyLoss(weight=weights, reduction='none').to(self.device)
+                    detailed_loss = detailed_loss_fn(torch.unflatten(pred, 1, [3, -1]), y).to('cpu').numpy()
+                    detailed_loss = detailed_loss.sum(axis=0)
+                    detailed_loss = detailed_loss * len(detailed_loss) / weights[y].sum().to('cpu').numpy()  # Reproduce 'mean' reduction
+                    metrics['detailed_loss'] += detailed_loss
+
 
         if 'loss' in metrics.keys():
             metrics['loss'] = valid_loss

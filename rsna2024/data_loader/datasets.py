@@ -4,13 +4,14 @@ import numpy as np
 import pydicom
 import cv2
 import random
+from itertools import compress
 
 from torch.utils.data import Dataset
 
 from rsna2024.utils import natural_sort
 
 class RSNADataset(Dataset):
-    def __init__(self, df, data_dir, out_vars, img_num, resolution, transform=None):
+    def __init__(self, df, data_dir, out_vars, img_num, resolution, block_position=('middle', 'middle', 'middle'), series_mask=(0, 0, 0), transform=None):
         self.df = df
         self.df_series = self.load_series_info(data_dir)
         self.df_coordinates = self.load_coordinates_info(data_dir).merge(self.df_series, how='left', on=['study_id', 'series_id'])
@@ -19,6 +20,9 @@ class RSNADataset(Dataset):
         self.transform = transform
         self.img_num = img_num
         self.resolution = resolution
+        self.block_position = block_position
+        self.series_mask = series_mask
+        self.series_descriptions = ['Sagittal T1', 'Sagittal T2/STIR', 'Axial T2']
 
     def __len__(self):
         return len(self.df)
@@ -28,11 +32,15 @@ class RSNADataset(Dataset):
         label = self.df[self.out_vars].iloc[idx].values
         label = np.nan_to_num(label.astype(float), nan=0).astype(np.int64)
 
-        # Sagittal T1
-        x1 = self.get_series(row.study_id, 'Sagittal T1', img_num=self.img_num[0])
-        x2 = self.get_series(row.study_id, 'Sagittal T2/STIR', img_num=self.img_num[1])
-        x3 = self.get_series(row.study_id, 'Axial T2', img_num=self.img_num[2])
-        x = np.concatenate([x1, x2, x3], axis=2)
+        x1, x2, x3 = None, None, None
+        if self.series_mask[0]:
+            x1 = self.get_series(row.study_id, 'Sagittal T1', img_num=self.img_num[0], block_position=self.block_position[0])
+        if self.series_mask[1]:
+            x2 = self.get_series(row.study_id, 'Sagittal T2/STIR', img_num=self.img_num[1], block_position=self.block_position[1])
+        if self.series_mask[2]:
+            x3 = self.get_series(row.study_id, 'Axial T2', img_num=self.img_num[2], block_position=self.block_position[2])
+
+        x = np.concatenate(list(compress([x1, x2, x3], self.series_mask)), axis=2)
 
         if self.transform:
             x = self.transform(image=x)['image']
@@ -41,7 +49,7 @@ class RSNADataset(Dataset):
 
     def load_series_info(self, data_dir):
         return pd.read_csv(os.path.join(data_dir, 'train_series_descriptions.csv'), dtype={'study_id': 'str', 'series_id': 'str'})
-    
+
     def load_coordinates_info(self, data_dir):
         df_coordinates = pd.read_csv(os.path.join(data_dir, '..', 'processed', 'train_label_coordinates.csv'), dtype={'study_id': 'str', 'series_id': 'str'})
         return df_coordinates
@@ -65,7 +73,7 @@ class RSNADataset(Dataset):
             mode='constant',
         )
 
-    def get_series(self, study_id, series_description, img_num):
+    def get_series(self, study_id, series_description, img_num, block_position='middle'):
         x = np.zeros((*self.resolution, img_num), dtype=np.float32)
         series_id = self.get_series_id(study_id, series_description)
         if series_id is None:
@@ -75,8 +83,13 @@ class RSNADataset(Dataset):
         file_list = natural_sort(os.listdir(series_dir))
 
         if len(file_list) > img_num:
-            start_index = (len(file_list)-img_num) // 2
-            file_list = file_list[start_index:start_index + img_num]
+            if block_position == 'start':
+                file_list = file_list[:img_num]
+            elif block_position == 'end':
+                file_list = file_list[-img_num:]
+            elif block_position == 'middle':
+                start_index = (len(file_list)-img_num) // 2
+                file_list = file_list[start_index:start_index + img_num]
 
         for i, filename in enumerate(file_list):
             ds = pydicom.dcmread(os.path.join(series_dir, filename))
@@ -87,9 +100,74 @@ class RSNADataset(Dataset):
 
         # Standardize series
         x = (x - x.mean()) / x.std()
-        
+
         return x
-    
+
+    def get_series_meanpos(self, study_id, series_description, img_num):
+        if series_description == 'Sagittal T1':
+            img_num_mult = 2
+        elif series_description == 'Sagittal T2/STIR':
+            img_num_mult = 1
+        elif series_description == 'Axial T2':
+            img_num_mult = 5
+        x = np.zeros((*self.resolution, img_num*img_num_mult), dtype=np.float32)
+        series_id = self.get_series_id(study_id, series_description)
+        if series_id is None:
+            return x
+
+        series_dir = os.path.join(self.img_dir, study_id, series_id)
+        file_list = natural_sort(os.listdir(series_dir))
+        slice_num = len(file_list)
+
+        # Fix direction
+        ds_first = pydicom.dcmread(os.path.join(series_dir, file_list[0]))
+        ds_last = pydicom.dcmread(os.path.join(series_dir, file_list[-1]))
+        pos_diff = np.array(ds_last.ImagePositionPatient) - np.array(ds_first.ImagePositionPatient)
+        pos_diff = pos_diff[np.abs(pos_diff).argmax()]
+        if pos_diff < 0:
+            file_list.reverse()
+
+        if slice_num > img_num:
+            if series_description == 'Sagittal T1':
+                lef_start = round(slice_num * 0.7040) - img_num // 2
+                right_start = round(slice_num * 0.2592) - img_num // 2
+                file_list = (
+                    file_list[lef_start : lef_start + img_num]
+                    + file_list[right_start : right_start + img_num]
+                )
+            elif series_description == 'Sagittal T2/STIR':
+                midline_start = round(slice_num * 0.4925) - img_num // 2
+                file_list = file_list[midline_start:midline_start + img_num]
+            elif series_description == 'Axial T2':
+                l1_start = round(slice_num * 0.8160) - img_num // 2
+                l2_start = round(slice_num * 0.6502) - img_num // 2
+                l3_start = round(slice_num * 0.4925) - img_num // 2
+                l4_start = round(slice_num * 0.3374) - img_num // 2
+                l5_start = round(slice_num * 0.1617) - img_num // 2
+                file_list = (
+                    file_list[l1_start : l1_start + img_num]
+                    + file_list[l2_start : l2_start + img_num]
+                    + file_list[l3_start : l3_start + img_num]
+                    + file_list[l4_start : l4_start + img_num]
+                    + file_list[l5_start : l5_start + img_num]
+                )
+        elif slice_num < img_num: # pad with None symmetrically
+            file_list = [None] * ((img_num - slice_num) // 2) + file_list + [None] * ((img_num - slice_num) // 2)
+
+        for i, filename in enumerate(file_list):
+            if filename is None:
+                continue
+            ds = pydicom.dcmread(os.path.join(series_dir, filename))
+            img = ds.pixel_array.astype(np.float32)
+            img = cv2.resize(img, self.resolution, interpolation=cv2.INTER_CUBIC)
+
+            x[..., i] = img
+
+        # Standardize series
+        x = (x - x.mean()) / x.std()
+
+        return x
+
     def get_series_with_coord(self, study_id, series_description, img_num, kpmap=False):
         if kpmap:
             img_num += 1
@@ -111,10 +189,10 @@ class RSNADataset(Dataset):
 
         keypoints = list(zip(series_coord_padded['x_norm'].values * self.resolution[0], 
                              series_coord_padded['y_norm'].values * self.resolution[1]))
-        
+
         if len(series_list) == 0:
             return x, keypoints
-        
+
         # If multiple series, get one randomly
         series_id = random.sample(series_list, 1)[0]
 
@@ -141,8 +219,47 @@ class RSNADataset(Dataset):
                 x_kp, y_kp = int(x_kp), int(y_kp)
                 cv2.circle(keypoint_img, (x_kp, y_kp), 20, 1, -1)
             x[..., -1] = keypoint_img
-        
+
         return x, keypoints
+
+class RSNADatasetMeanpos(RSNADataset):
+    def __getitem__(self, idx):
+        row = self.df.iloc[idx]
+        label = self.df[self.out_vars].iloc[idx].values
+        label = np.nan_to_num(label.astype(float), nan=0).astype(np.int64)
+
+        x1, x2, x3 = None, None, None
+        if self.series_mask[0]:
+            x1 = self.get_series_meanpos(row.study_id, 'Sagittal T1', img_num=self.img_num[0])
+        if self.series_mask[1]:
+            x2 = self.get_series_meanpos(row.study_id, 'Sagittal T2/STIR', img_num=self.img_num[1])
+        if self.series_mask[2]:
+            x3 = self.get_series_meanpos(row.study_id, 'Axial T2', img_num=self.img_num[2])
+
+        x = np.concatenate(list(compress([x1, x2, x3], self.series_mask)), axis=2)
+
+        if self.transform:
+            x = self.transform(image=x)['image']
+
+        return x, label
+
+class RSNASplitMeanposDataset(RSNADataset):
+    def __getitem__(self, idx):
+        row = self.df.iloc[idx]
+        label = self.df[self.out_vars].iloc[idx].values
+        label = np.nan_to_num(label.astype(float), nan=0).astype(np.int64)
+
+        # Sagittal T1
+        x1 = self.get_series_meanpos(row.study_id, 'Sagittal T1', img_num=self.img_num[0])
+        x2 = self.get_series_meanpos(row.study_id, 'Sagittal T2/STIR', img_num=self.img_num[1])
+        x3 = self.get_series_meanpos(row.study_id, 'Axial T2', img_num=self.img_num[2])
+        
+        if self.transform:
+            x1 = self.transform(image=x1)['image']
+            x2 = self.transform(image=x2)['image']
+            x3 = self.transform(image=x3)['image']
+
+        return x1, x2, x3, label
 
 class RSNASplitDataset(RSNADataset):
     def __getitem__(self, idx):
@@ -151,9 +268,9 @@ class RSNASplitDataset(RSNADataset):
         label = np.nan_to_num(label.astype(float), nan=0).astype(np.int64)
 
         # Sagittal T1
-        x1 = self.get_series(row.study_id, 'Sagittal T1', img_num=self.img_num[0])
-        x2 = self.get_series(row.study_id, 'Sagittal T2/STIR', img_num=self.img_num[1])
-        x3 = self.get_series(row.study_id, 'Axial T2', img_num=self.img_num[2])
+        x1 = self.get_series(row.study_id, 'Sagittal T1', img_num=self.img_num[0], block_position=self.block_position[0])
+        x2 = self.get_series(row.study_id, 'Sagittal T2/STIR', img_num=self.img_num[1], block_position=self.block_position[1])
+        x3 = self.get_series(row.study_id, 'Axial T2', img_num=self.img_num[2], block_position=self.block_position[2])
         
         if self.transform:
             x1 = self.transform(image=x1)['image']
@@ -161,7 +278,7 @@ class RSNASplitDataset(RSNADataset):
             x3 = self.transform(image=x3)['image']
 
         return x1, x2, x3, label
-    
+
 class RSNASplitCoordDataset(RSNADataset):
     def __getitem__(self, idx):
         row = self.df.iloc[idx]
@@ -186,7 +303,7 @@ class RSNASplitCoordDataset(RSNADataset):
             keypoints /= self.resolution[0]
 
         return x1, x2, x3, (label, keypoints)
-    
+
 class RSNASplitKpmapDataset(RSNADataset):
     def __getitem__(self, idx):
         row = self.df.iloc[idx]

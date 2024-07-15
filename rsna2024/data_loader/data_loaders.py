@@ -2,10 +2,12 @@ from torch.utils.data import DataLoader
 
 from .datasets import (
     RSNADataset,
+    RSNADatasetMeanpos,
     RSNASplitDataset,
     RSNASplitCoordDataset,
     RSNASplitKpmapDataset,
     RSNAMilSplitDataset,
+    RSNASplitMeanposDataset,
 )
 
 
@@ -24,8 +26,10 @@ class BaseRSNADataLoader(DataLoader):
         num_workers,
         pin_memory,
         resolution,
+        block_position,
+        series_mask,
     ):
-        dataset_instance = dataset(df, data_dir, out_vars, img_num=img_num, transform=transform, resolution=resolution)
+        dataset_instance = dataset(df, data_dir, out_vars, img_num=img_num, transform=transform, resolution=resolution, block_position=block_position, series_mask=series_mask)
         if phase == 'valid':
             shuffle = False
         super().__init__(
@@ -40,6 +44,16 @@ class BaseRSNADataLoader(DataLoader):
 class RSNADataLoader(BaseRSNADataLoader):
     def __init__(self, *args, **kwargs):
         super().__init__(RSNADataset, *args, **kwargs)
+
+
+class RSNADatasetMeanposDataLoader(BaseRSNADataLoader):
+    def __init__(self, *args, **kwargs):
+        super().__init__(RSNADatasetMeanpos, *args, **kwargs)
+
+
+class RSNASplitMeanposDataLoader(BaseRSNADataLoader):
+    def __init__(self, *args, **kwargs):
+        super().__init__(RSNASplitMeanposDataset, *args, **kwargs)
 
 
 class RSNASplitDataLoader(BaseRSNADataLoader):

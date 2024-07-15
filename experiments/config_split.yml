@@ -16,22 +16,24 @@ labels:
   Severe: 2
 
 model:
-  type: RSNASplit
+  type: RSNABaseline
   args:
     base_model: efficientnet_b0
     num_classes: 75
-    in_channels: [8, 8, 8]
+    in_channels: 56
     pretrained: True
 
 data_loader:
-  type: RSNASplitDataLoader
+  type: RSNADatasetMeanposDataLoader
   args:
-    img_num: [8, 8, 8]
+    img_num: [7, 7, 7]
     batch_size: 16
     num_workers: 8
     pin_memory: True
     shuffle: True
-    resolution: [512, 512]
+    resolution: [256, 256]
+    block_position: []
+    series_mask: [1, 1, 1]
 
 train_transform:
   type: Affine
