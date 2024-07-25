@@ -1,11 +1,11 @@
 from torch.utils.data import DataLoader
+import torch
 
 from .datasets import (
     RSNADataset,
-    RSNADatasetMeanpos,
+    RSNAMeanposDataset,
     RSNASplitDataset,
     RSNASplitCoordDataset,
-    RSNASplitKpmapDataset,
     RSNAMilSplitDataset,
     RSNASplitMeanposDataset,
 )
@@ -26,8 +26,8 @@ class BaseRSNADataLoader(DataLoader):
         num_workers,
         pin_memory,
         resolution,
-        block_position,
-        series_mask,
+        block_position=None,
+        series_mask=None,
     ):
         dataset_instance = dataset(df, data_dir, out_vars, img_num=img_num, transform=transform, resolution=resolution, block_position=block_position, series_mask=series_mask)
         if phase == 'valid':
@@ -46,9 +46,9 @@ class RSNADataLoader(BaseRSNADataLoader):
         super().__init__(RSNADataset, *args, **kwargs)
 
 
-class RSNADatasetMeanposDataLoader(BaseRSNADataLoader):
+class RSNAMeanposDataLoader(BaseRSNADataLoader):
     def __init__(self, *args, **kwargs):
-        super().__init__(RSNADatasetMeanpos, *args, **kwargs)
+        super().__init__(RSNAMeanposDataset, *args, **kwargs)
 
 
 class RSNASplitMeanposDataLoader(BaseRSNADataLoader):
@@ -61,15 +61,40 @@ class RSNASplitDataLoader(BaseRSNADataLoader):
         super().__init__(RSNASplitDataset, *args, **kwargs)
 
 
-class RSNASplitCoordDataLoader(BaseRSNADataLoader):
-    def __init__(self, *args, **kwargs):
-        super().__init__(RSNASplitCoordDataset, *args, **kwargs)
-
-
-class RSNASplitKpmapDataLoader(BaseRSNADataLoader):
-    def __init__(self, *args, **kwargs):
-        super().__init__(RSNASplitKpmapDataset, *args, **kwargs)
-
+class RSNASplitCoordDataLoader(DataLoader):
+    def __init__(
+        self,
+        df,
+        transform,
+        phase,
+        data_dir,
+        out_vars,
+        img_num,
+        batch_size,
+        shuffle,
+        num_workers,
+        pin_memory,
+        resolution,
+        heatmap_std,
+    ):
+        dataset_instance = RSNASplitCoordDataset(
+            df=df,
+            data_dir=data_dir,
+            out_vars=out_vars,
+            img_num=img_num,
+            transform=transform,
+            resolution=resolution,
+            heatmap_std=heatmap_std,
+        )
+        if phase == 'valid':
+            shuffle = False
+        super().__init__(
+            dataset_instance,
+            batch_size=batch_size,
+            shuffle=shuffle,
+            num_workers=num_workers,
+            pin_memory=pin_memory,
+        )
 
 class RSNAMilSplitDataLoader(BaseRSNADataLoader):
     def __init__(self, *args, **kwargs):

@@ -13,17 +13,18 @@ from rsna2024.trainer import Trainer
 from rsna2024 import model as module_model
 import rsna2024.data_loader.augmentation as module_aug
 import rsna2024.data_loader.data_loaders as module_data
+import rsna2024.utils.loss as module_loss
 
 
 class RunnerBase:
-    def __init__(self, cfg, model_name=None):
+    def __init__(self, cfg, model_name=None, model_dir=None):
         self.cfg = cfg
         self.device = self.get_device()
-        self.loss_fn = self.get_instance(nn, 'loss', cfg)
+        self.loss_fn = self.get_instance(module_loss, 'loss', cfg)
         self.model_name = model_name
         self.data_dir = None
         self.df = None
-        self.model_dir = None
+        self.model_dir = model_dir
 
     def get_device(self):
         return torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
@@ -105,8 +106,8 @@ class RunnerBase:
         valid_loader = self.get_instance(module_data, 'data_loader', self.cfg, df_valid, valid_transform, 'valid', self.data_dir, self.cfg['out_vars'])
 
         # Training
-        trainer = Trainer(model, train_loader, valid_loader, self.loss_fn, optimizer, scheduler, self.device, 
-                          num_epochs=self.cfg['trainer']['epochs'], state_filename=state_filename, metrics=self.cfg['trainer']['metrics'], wandb_log=self.cfg['use_wandb'])
+        trainer = Trainer(model, train_loader, valid_loader, self.loss_fn, optimizer, scheduler, self.device, state_filename=state_filename, wandb_log=self.cfg['use_wandb'], 
+                          num_epochs=self.cfg['trainer']['epochs'], metrics=self.cfg['trainer']['metrics'], trainer_type=self.cfg['trainer']['type'])
         trainer.train_epochs(num_epochs=self.cfg['trainer']['epochs'], validate=validate)
         trainer.save_state(state_filename)
 
@@ -119,11 +120,24 @@ class RunnerBase:
         valid_loader = self.get_instance(module_data, 'data_loader', self.cfg, df_valid, valid_transform, 'valid', self.data_dir, self.cfg['out_vars'])
 
         # Training
-        trainer = Trainer(model, None, valid_loader, self.loss_fn, device=self.device, metrics=self.cfg['trainer']['metrics'])
+        trainer = Trainer(model, None, valid_loader, self.loss_fn, device=self.device, metrics=self.cfg['trainer']['metrics'], trainer_type=self.cfg['trainer']['type'])
         trainer.load_state(state_filename)
         valid_loss, metrics = trainer.validate()
 
         return valid_loss, metrics
+    
+    def get_predictions(self, df, state_filename):
+        model = self.get_instance(module_model, 'model', self.cfg).to(self.device)
+
+        valid_transform = self.get_instance(module_aug, 'valid_transform', self.cfg).get_transform()
+        valid_loader = self.get_instance(module_data, 'data_loader', self.cfg, df, valid_transform, 'valid', self.data_dir, self.cfg['out_vars'])
+
+        # Training
+        trainer = Trainer(model, None, valid_loader, self.loss_fn, device=self.device, metrics=self.cfg['trainer']['metrics'])
+        trainer.load_state(state_filename)
+        preds, ys = trainer.predict()
+
+        return preds, ys
 
 
 class Runner(RunnerBase):
@@ -181,10 +195,7 @@ class Runner(RunnerBase):
     def validate(self, state_type='best'):
         self.model_dir = os.path.join(self.cfg['root'], 'models', self.model_name)
 
-        # Seed
         self.seed_everything()
-
-        # Cross-validation validation splits
         splits = self.load_splits()
 
         metric_list = []
@@ -204,6 +215,37 @@ class Runner(RunnerBase):
             if self.cfg['trainer']['one_fold']:
                 break
         return metric_list
+    
+    def predict(self, state_type='best', oof=True):
+        self.model_dir = os.path.join(self.cfg['root'], 'models', self.model_name)
+
+        self.seed_everything()
+        splits = self.load_splits()
+
+        preds, ys = [], []
+        data = pd.DataFrame()
+        for cv, (df_train, df_valid) in enumerate(splits):
+            print(f'Cross-validation fold {cv+1}/{self.cfg['trainer']['cv_fold']}')
+            if state_type == 'best':
+                state_filename_suffix = '_best'
+            elif state_type == 'last':
+                state_filename_suffix = ''
+            else:
+                raise ValueError('state_type must be "best" or "last"')
+            state_filename = os.path.join(self.model_dir, f'{self.model_name}-cv{cv+1}{state_filename_suffix}.pt')
+            if oof:
+                pred, y = self.get_predictions(df_valid, state_filename)
+                data = pd.concat([data, df_valid])
+            else:
+                pred, y = self.get_predictions(df_train, state_filename)
+                data = pd.concat([data, df_train])
+            preds.append(pred)
+            ys.append(y)
+        preds = np.concatenate(preds)
+        preds = np.moveaxis(preds, 1, -1)
+        ys = np.concatenate(ys)
+
+        return preds, ys, data
 
     def get_sample_batch(self):
         transform = self.get_instance(module_aug, 'train_transform', self.cfg).get_transform()

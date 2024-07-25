@@ -5,7 +5,7 @@ import pydicom
 
 from rsna2024.utils import natural_sort
 
-root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+root = os.path.abspath(os.path.join(os.path.dirname(__file__), '../..'))
 data_dir = os.path.join(root, 'data')
 raw_data_dir = os.path.join(data_dir, 'raw')
 processed_data_dir = os.path.join(data_dir, 'processed')
@@ -28,7 +28,10 @@ def normalize(s):
     ds_last = pydicom.dcmread(os.path.join(dcm_folder, dcm_files[-1]))
     pos_diff = np.array(ds_last.ImagePositionPatient) - np.array(ds_first.ImagePositionPatient)
     pos_diff = pos_diff[np.abs(pos_diff).argmax()]
-    slice_dir = 0 if pos_diff >= 0 else 1
+    if pos_diff >= 0:
+        slice_dir = 0
+    else:
+        slice_dir = 1
     return [s.x/ds.Columns, s.y/ds.Rows, dcm_files.index(filename)/file_num, file_num, int(ds.InstanceNumber), slice_dir]
 
 df[['x_norm', 'y_norm', 'instance_number_norm', 'file_num', 'dcm_instance_number', 'slice_dir']] = df.apply(normalize, axis=1, result_type='expand')

@@ -8,7 +8,7 @@ from torch import nn
 import wandb
 
 class Trainer:
-    def __init__(self, model, train_loader, valid_loader, loss_fn, optimizer=None, scheduler=None, device=None, state_filename=None, metrics=None, num_epochs=None, wandb_log=False):
+    def __init__(self, model, train_loader, valid_loader, loss_fn, optimizer=None, scheduler=None, device=None, state_filename=None, metrics=None, num_epochs=None, wandb_log=False, trainer_type='standard'):
         self.model = model
         self.train_dataloader = train_loader
         self.valid_dataloader = valid_loader
@@ -24,6 +24,7 @@ class Trainer:
         self.last_metric = np.inf
         self.epoch_count = 0
         self.scaler = torch.cuda.amp.GradScaler()
+        self.trainer_type = trainer_type
 
     def train_epochs(self, num_epochs=None, validate=True):
         if num_epochs is not None:
@@ -76,24 +77,15 @@ class Trainer:
         train_loss = 0
         for batch in tqdm(self.train_dataloader, total=num_batches):
             self.optimizer.zero_grad()
-            *X, y = batch
-            X = [x.to(self.device, non_blocking=True) for x in X]
-            coord_regr = isinstance(y, list)
-            if coord_regr:
-                y = list([yi.to(self.device, non_blocking=True) for yi in y])
-            else:
+            if self.trainer_type == 'standard':
+                *X, y = batch
+                X = [x.to(self.device, non_blocking=True) for x in X]
                 y = y.to(self.device, non_blocking=True)
-            
-            with torch.cuda.amp.autocast():
-                pred = self.model(*X)
-                if coord_regr:
-                    pred, regr = pred
-                    loss1 = self.loss_fn(torch.unflatten(pred, 1, [3, -1]), y[0])
-                    loss2 = nn.MSELoss()(regr, y[1])
-                    loss = loss1 + loss2
-                else:
-                    loss = self.loss_fn(torch.unflatten(pred, 1, [3, -1]), y)
-
+                
+                with torch.cuda.amp.autocast():
+                    pred = self.model(*X)
+                    # loss = self.loss_fn(torch.unflatten(pred, 1, [3, -1]), y)
+                    loss = self.loss_fn(pred, y)
 
             # Backpropagation
             self.scaler.scale(loss).backward()
@@ -115,36 +107,25 @@ class Trainer:
         metrics = {m: 0 for m in self.metrics}
         with torch.no_grad():
             for batch in tqdm(self.valid_dataloader, total=num_batches):
-                *X, y = batch
-                X = [x.to(self.device, non_blocking=True) for x in X]
-                coord_regr = isinstance(y, list)
-                if coord_regr:
-                    y = list([yi.to(self.device, non_blocking=True) for yi in y])
-                else:
+                if self.trainer_type == 'standard':
+                    *X, y = batch
+                    X = [x.to(self.device, non_blocking=True) for x in X]
                     y = y.to(self.device, non_blocking=True)
+                    
+                    pred = self.model(*X)
+                    # loss = self.loss_fn(torch.unflatten(pred, 1, [3, -1]), y)
+                    loss = self.loss_fn(pred, y)
+
+                    valid_loss += loss.item()
                 
-                pred = self.model(*X)
-                if coord_regr:
-                    pred, regr = pred
-                    loss1 = self.loss_fn(torch.unflatten(pred, 1, [3, -1]), y[0])
-                    loss2 = nn.MSELoss()(regr, y[1])
-                    loss = loss1 + loss2
-                else:
-                    loss = self.loss_fn(torch.unflatten(pred, 1, [3, -1]), y)
 
-                valid_loss += loss.item()
-
-                if 'loss1' in metrics.keys():
-                    metrics['loss1'] += loss1.item()
-                if 'loss2' in metrics.keys():
-                    metrics['loss2'] += loss2.item()
-                if 'detailed_loss' in metrics.keys():
-                    weights = torch.tensor([1.0, 2.0, 4.0]).to(self.device)
-                    detailed_loss_fn = nn.CrossEntropyLoss(weight=weights, reduction='none').to(self.device)
-                    detailed_loss = detailed_loss_fn(torch.unflatten(pred, 1, [3, -1]), y).to('cpu').numpy()
-                    detailed_loss = detailed_loss.sum(axis=0)
-                    detailed_loss = detailed_loss * len(detailed_loss) / weights[y].sum().to('cpu').numpy()  # Reproduce 'mean' reduction
-                    metrics['detailed_loss'] += detailed_loss
+                    if 'detailed_loss' in metrics.keys():
+                        weights = torch.tensor([1.0, 2.0, 4.0]).to(self.device)
+                        detailed_loss_fn = nn.CrossEntropyLoss(weight=weights, reduction='none').to(self.device)
+                        detailed_loss = detailed_loss_fn(torch.unflatten(pred, 1, [3, -1]), y).to('cpu').numpy()
+                        detailed_loss = detailed_loss.sum(axis=0)
+                        detailed_loss = detailed_loss * len(detailed_loss) / weights[y].sum().to('cpu').numpy()  # Reproduce 'mean' reduction
+                        metrics['detailed_loss'] += detailed_loss
 
 
         if 'loss' in metrics.keys():
@@ -155,6 +136,26 @@ class Trainer:
             metrics[m] /= num_batches
 
         return valid_loss, metrics
+    
+    def predict(self):
+        num_batches = len(self.valid_dataloader)
+        self.model.eval()
+        
+        preds, ys = [], []
+        with torch.no_grad():
+            for batch in tqdm(self.valid_dataloader, total=num_batches):
+                *X, y = batch
+                X = [x.to(self.device, non_blocking=True) for x in X]
+                y = y.to(self.device, non_blocking=True)
+                
+                pred = self.model(*X)
+                # pred = torch.unflatten(pred, 1, [3, -1])
+                preds.append(pred)
+                ys.append(y)
+        preds = torch.cat(preds, dim=0).to('cpu').numpy()
+        ys = torch.cat(ys, dim=0).to('cpu').numpy()
+
+        return preds, ys
     
     def save_state(self, filename):
         torch.save(self.model.state_dict(), filename)

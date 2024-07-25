@@ -2,6 +2,7 @@ import torch.nn as nn
 import logging
 import timm
 import torch
+import segmentation_models_pytorch as smp
 
 logging.getLogger('timm').setLevel(logging.WARNING)
 
@@ -19,7 +20,7 @@ class RSNABaseline(nn.Module):
 
     def forward(self, x):
         return self.model(x)
-    
+
 class RSNASplit(nn.Module):
     def __init__(self, base_model, num_classes, pretrained=True, in_channels=None):
         super().__init__()
@@ -33,22 +34,34 @@ class RSNASplit(nn.Module):
     def forward(self, x1, x2, x3):
         x = torch.cat((self.model1(x1), self.model2(x2), self.model3(x3)), dim=1)
         return self.classifier(x)
-    
-class RSNASplitCoord(nn.Module):
-    def __init__(self, base_model, num_classes, pretrained=True, in_channels=None):
+
+
+class RSNASplitCoordModel(nn.Module):
+    def __init__(
+        self,
+        base_model,
+        encoder_name='resnet34',
+        num_classes=None,
+        in_channels=None,
+        encoder_weights='imagenet',
+    ):
         super().__init__()
         self.base_model = base_model
+        self.encoder_name = encoder_name
         self.num_classes = num_classes
-        self.model1 = timm.create_model(model_name=self.base_model, pretrained=pretrained, num_classes=128, in_chans=in_channels[0])
-        self.model2 = timm.create_model(model_name=self.base_model, pretrained=pretrained, num_classes=128, in_chans=in_channels[1])
-        self.model3 = timm.create_model(model_name=self.base_model, pretrained=pretrained, num_classes=128, in_chans=in_channels[2])
-        self.classifier = nn.Linear(3*128, self.num_classes)
-        self.regressor = nn.Linear(3*128, 50)
+        self.in_channels = in_channels
+        self.encoder_weights = encoder_weights
 
-    def forward(self, x1, x2, x3):
-        x = torch.cat((self.model1(x1), self.model2(x2), self.model3(x3)), dim=1)
-        return self.classifier(x), self.regressor(x)
-    
+        self.unet = getattr(smp, self.base_model)(
+            encoder_name=self.encoder_name,
+            classes=self.num_classes[0],
+            in_channels=self.in_channels[0],
+            encoder_weights=self.encoder_weights,
+        )
+
+    def forward(self, x):
+        return self.unet(x)
+
 
 class RSNAMilSplit(nn.Module):
     def __init__(self, base_model, num_classes, pretrained=True, in_channels=None, resolution=None, instance_num=None):
@@ -88,5 +101,3 @@ class RSNAMilSplit(nn.Module):
         # feature3 = self.rnn3(feature3)[0].reshape(-1, self.instance_num*self.encoder_classes)
         x = torch.cat((feature1, feature2, feature3), dim=1)
         return self.classifier(x)
-
-    
