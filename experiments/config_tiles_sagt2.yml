@@ -1,0 +1,103 @@
+project_name: rsna-2024
+seed: 42
+debug: False
+deterministic: True
+benchmark: False
+
+# Wandb
+use_wandb: True
+tags:
+  - tiles_sagt2
+notes: ''
+
+labels: &labels
+  Normal/Mild: 0
+  Moderate: 1
+  Severe: 2
+
+model:
+  type: TilesSagt2Model
+  args:
+    base_model: efficientnet_b0
+    num_classes: 3
+    in_channels: 5
+    pretrained: True
+
+data_loader:
+  type: TilesSagt2DataLoader
+  args:
+    batch_size: 16
+    num_workers: 8
+    pin_memory: True
+    shuffle: True
+    img_num: 5
+    resolution: 128
+    proportion: 0.25
+    labels: *labels
+
+train_transform:
+  type: Affine
+  args: 
+    scale: [0.9, 1.1]
+    translate_percent: [-0.1, 0.1]
+    rotate: [-10, 10]
+    shear: [-10, 10]
+    p: 1.0
+
+valid_transform:
+  type: NoAug
+  args: {}
+
+
+optimizer:
+  type: AdamW
+  args:
+    lr: 0.001
+
+loss:
+  type: CrossEntropyLoss
+  args:
+    weight: [1.0, 2.0, 4.0]
+
+scheduler:
+  type: StepLR
+  args:
+    step_size: 2
+    gamma: 0.1
+
+trainer:
+  epochs: 5
+  cv_fold: 5
+  one_fold: False
+  freeze_epochs: 0
+  metrics: ['loss']
+  type: standard
+
+out_vars:
+  - spinal_canal_stenosis_l1_l2
+  - spinal_canal_stenosis_l2_l3
+  - spinal_canal_stenosis_l3_l4
+  - spinal_canal_stenosis_l4_l5
+  - spinal_canal_stenosis_l5_s1
+  - left_neural_foraminal_narrowing_l1_l2
+  - left_neural_foraminal_narrowing_l2_l3
+  - left_neural_foraminal_narrowing_l3_l4
+  - left_neural_foraminal_narrowing_l4_l5
+  - left_neural_foraminal_narrowing_l5_s1
+  - right_neural_foraminal_narrowing_l1_l2
+  - right_neural_foraminal_narrowing_l2_l3
+  - right_neural_foraminal_narrowing_l3_l4
+  - right_neural_foraminal_narrowing_l4_l5
+  - right_neural_foraminal_narrowing_l5_s1
+  - left_subarticular_stenosis_l1_l2
+  - left_subarticular_stenosis_l2_l3
+  - left_subarticular_stenosis_l3_l4
+  - left_subarticular_stenosis_l4_l5
+  - left_subarticular_stenosis_l5_s1
+  - right_subarticular_stenosis_l1_l2
+  - right_subarticular_stenosis_l2_l3
+  - right_subarticular_stenosis_l3_l4
+  - right_subarticular_stenosis_l4_l5
+  - right_subarticular_stenosis_l5_s1
+
+
