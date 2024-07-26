@@ -84,7 +84,6 @@ class Trainer:
                 
                 with torch.cuda.amp.autocast():
                     pred = self.model(*X)
-                    # loss = self.loss_fn(torch.unflatten(pred, 1, [3, -1]), y)
                     loss = self.loss_fn(pred, y)
 
             # Backpropagation
@@ -113,11 +112,9 @@ class Trainer:
                     y = y.to(self.device, non_blocking=True)
                     
                     pred = self.model(*X)
-                    # loss = self.loss_fn(torch.unflatten(pred, 1, [3, -1]), y)
                     loss = self.loss_fn(pred, y)
 
                     valid_loss += loss.item()
-                
 
                     if 'detailed_loss' in metrics.keys():
                         weights = torch.tensor([1.0, 2.0, 4.0]).to(self.device)

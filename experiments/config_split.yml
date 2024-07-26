@@ -7,7 +7,7 @@ benchmark: False
 # Wandb
 use_wandb: True
 tags:
-  - baseline
+  - split
 notes: ''
 
 labels:
@@ -15,60 +15,7 @@ labels:
   Moderate: 1
   Severe: 2
 
-model:
-  type: RSNABaseline
-  args:
-    base_model: efficientnet_b0
-    num_classes: 75
-    in_channels: 56
-    pretrained: True
-
-data_loader:
-  type: RSNADatasetMeanposDataLoader
-  args:
-    img_num: [7, 7, 7]
-    batch_size: 16
-    num_workers: 8
-    pin_memory: True
-    shuffle: True
-    resolution: [256, 256]
-    block_position: []
-    series_mask: [1, 1, 1]
-
-train_transform:
-  type: Affine
-  args: 
-    p: 1.0
-
-valid_transform:
-  type: NoAug
-  args: {}
-
-
-optimizer:
-  type: AdamW
-  args:
-    lr: 0.001
-
-loss:
-  type: CrossEntropyLoss
-  args:
-    weight: [1.0, 2.0, 4.0]
-
-scheduler:
-  type: StepLR
-  args:
-    step_size: 4
-    gamma: 0.1
-
-trainer:
-  epochs: 5
-  cv_fold: 5
-  one_fold: False
-  freeze_epochs: 0
-  metrics: ['loss']
-
-out_vars:
+out_vars: &out_vars
   - spinal_canal_stenosis_l1_l2
   - spinal_canal_stenosis_l2_l3
   - spinal_canal_stenosis_l3_l4
@@ -94,3 +41,61 @@ out_vars:
   - right_subarticular_stenosis_l3_l4
   - right_subarticular_stenosis_l4_l5
   - right_subarticular_stenosis_l5_s1
+
+model:
+  type: SplitModel
+  args:
+    base_model: efficientnet_b0
+    num_classes: 75
+    in_channels: [8, 8, 8]
+    pretrained: True
+
+dataset:
+  type: SplitDataset
+  args:
+    img_num: [8, 8, 8]
+    resolution: [512, 512]
+    block_position: ['middle', 'middle', 'middle']
+    data_dir: data/raw
+    out_vars: *out_vars
+
+data_loader:
+  type: BaseDataLoader
+  args:
+    batch_size: 16
+    num_workers: 8
+    pin_memory: True
+    shuffle: True
+
+train_transform:
+  type: Affine
+  args: 
+    p: 1.0
+
+valid_transform:
+  type: NoAug
+  args: {}
+
+
+optimizer:
+  type: AdamW
+  args:
+    lr: 0.001
+
+loss:
+  type: RSNACrossEntropyLoss
+  args: {}
+
+scheduler:
+  type: StepLR
+  args:
+    step_size: 4
+    gamma: 0.1
+
+trainer:
+  epochs: 5
+  cv_fold: 5
+  one_fold: False
+  freeze_epochs: 0
+  metrics: ['loss']
+  type: standard

@@ -3,24 +3,26 @@ import random
 import json
 import numpy as np
 import pandas as pd
-import wandb
 from sklearn.model_selection import KFold
 
 import torch
-from torch import nn, optim
+from torch import optim
+
+import wandb
 
 from rsna2024.trainer import Trainer
 from rsna2024 import model as module_model
 import rsna2024.data_loader.augmentation as module_aug
-import rsna2024.data_loader.data_loaders as module_data
+import rsna2024.data_loader as module_data
 import rsna2024.utils.loss as module_loss
 
 
 class RunnerBase:
     def __init__(self, cfg, model_name=None, model_dir=None):
         self.cfg = cfg
+        self.root_dir = self.cfg['root']
         self.device = self.get_device()
-        self.loss_fn = self.get_instance(module_loss, 'loss', cfg)
+        self.loss_fn = self.get_instance(module_loss, 'loss', cfg).to(self.device)
         self.model_name = model_name
         self.data_dir = None
         self.df = None
@@ -29,15 +31,8 @@ class RunnerBase:
     def get_device(self):
         return torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 
-    def get_instance(self, module, name, cfg, *args):
-
-        # Make list values torch.tensor
-        cfg_kvargs = cfg[name]['args'].copy()
-        for k, v in cfg_kvargs.items():
-            if k in ['weight'] and isinstance(v, list):
-                cfg_kvargs[k] = torch.tensor(v).to(self.device)
-
-        return getattr(module, cfg[name]['type'])(*args, **cfg_kvargs)
+    def get_instance(self, module, name, cfg, *args, **kwargs):
+        return getattr(module, cfg[name]['type'])(*args, **kwargs, **cfg[name]['args'])
     
     def seed_everything(self):
         seed = self.cfg['seed']
@@ -93,17 +88,19 @@ class RunnerBase:
     def create_model_dir(self, model_name):
         self.model_dir = os.path.join(self.cfg['root'], 'models', model_name)
         os.makedirs(self.model_dir, exist_ok=True)
+        
+    def get_dataloader(self, df, phase):
+        transform = self.get_instance(module_aug, f'{phase}_transform', self.cfg).get_transform()
+        dataset = self.get_instance(module_data, 'dataset', self.cfg, df, root_dir=self.root_dir, transform=transform)
+        return self.get_instance(module_data, 'data_loader', self.cfg, dataset, phase)
 
     def train_model(self, df_train, df_valid, state_filename, validate=True):
         model = self.get_instance(module_model, 'model', self.cfg).to(self.device)
         optimizer = self.get_instance(optim, 'optimizer', self.cfg, model.parameters())
         scheduler = self.get_instance(optim.lr_scheduler, 'scheduler', self.cfg, optimizer)
 
-        train_transform = self.get_instance(module_aug, 'train_transform', self.cfg).get_transform()
-        train_loader = self.get_instance(module_data, 'data_loader', self.cfg, df_train, train_transform, 'train', self.data_dir, self.cfg['out_vars'])
-
-        valid_transform = self.get_instance(module_aug, 'valid_transform', self.cfg).get_transform()
-        valid_loader = self.get_instance(module_data, 'data_loader', self.cfg, df_valid, valid_transform, 'valid', self.data_dir, self.cfg['out_vars'])
+        train_loader = self.get_dataloader(df_train, phase='train')
+        valid_loader = self.get_dataloader(df_valid, phase='valid')
 
         # Training
         trainer = Trainer(model, train_loader, valid_loader, self.loss_fn, optimizer, scheduler, self.device, state_filename=state_filename, wandb_log=self.cfg['use_wandb'], 
@@ -116,8 +113,7 @@ class RunnerBase:
     def validate_model(self, df_valid, state_filename):
         model = self.get_instance(module_model, 'model', self.cfg).to(self.device)
 
-        valid_transform = self.get_instance(module_aug, 'valid_transform', self.cfg).get_transform()
-        valid_loader = self.get_instance(module_data, 'data_loader', self.cfg, df_valid, valid_transform, 'valid', self.data_dir, self.cfg['out_vars'])
+        valid_loader = self.get_dataloader(df_valid, phase='valid')
 
         # Training
         trainer = Trainer(model, None, valid_loader, self.loss_fn, device=self.device, metrics=self.cfg['trainer']['metrics'], trainer_type=self.cfg['trainer']['type'])
@@ -128,9 +124,8 @@ class RunnerBase:
     
     def get_predictions(self, df, state_filename):
         model = self.get_instance(module_model, 'model', self.cfg).to(self.device)
-
-        valid_transform = self.get_instance(module_aug, 'valid_transform', self.cfg).get_transform()
-        valid_loader = self.get_instance(module_data, 'data_loader', self.cfg, df, valid_transform, 'valid', self.data_dir, self.cfg['out_vars'])
+        
+        valid_loader = self.get_dataloader(df, phase='valid')
 
         # Training
         trainer = Trainer(model, None, valid_loader, self.loss_fn, device=self.device, metrics=self.cfg['trainer']['metrics'])
@@ -248,6 +243,5 @@ class Runner(RunnerBase):
         return preds, ys, data
 
     def get_sample_batch(self):
-        transform = self.get_instance(module_aug, 'train_transform', self.cfg).get_transform()
-        data_loader = self.get_instance(module_data, 'data_loader', self.cfg, self.df, transform, 'train', self.data_dir, self.cfg['out_vars'])
+        data_loader = self.get_dataloader(self.df, phase='train')
         return next(iter(data_loader))
