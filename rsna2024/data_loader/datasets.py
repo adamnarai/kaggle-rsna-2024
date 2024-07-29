@@ -128,8 +128,17 @@ class BaseDataset(Dataset):
             elif block_position == 'middle':
                 start_index = (slice_num - img_num) // 2
                 file_list = file_list[start_index : start_index + img_num]
+        elif slice_num < img_num:
+            # pad with None symmetrically
+            file_list = (
+                [None] * ((img_num - slice_num) // 2)
+                + file_list
+                + [None] * ((img_num - slice_num) // 2 + (img_num - slice_num) % 2)
+            )
 
         for i, filename in enumerate(file_list):
+            if filename is None:
+                continue
             ds = pydicom.dcmread(os.path.join(series_dir, filename))
             img = ds.pixel_array.astype(np.float32)
             img = cv2.resize(img, self.resolution, interpolation=cv2.INTER_CUBIC)
@@ -183,7 +192,7 @@ class SplitCoordDataset(BaseDataset):
         self.df_coordinates = self.load_coordinates_info().merge(
             self.df_series, how='left', on=['study_id', 'series_id']
         )
-        self.img_dir = os.path.join(data_dir, 'train_images')
+        self.img_dir = os.path.join(self.data_dir, 'train_images')
         self.out_vars = out_vars
         self.transform = transform
         self.img_num = img_num

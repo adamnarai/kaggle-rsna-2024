@@ -68,8 +68,12 @@ data_loader:
     shuffle: True
 
 train_transform:
-  type: Affine
-  args: 
+  type: CombinedV2
+  args:
+    scale: [1, 1]
+    translate_percent: [0, 0]
+    rotate: [-15, 15]
+    shear: {'x': [-15, 15], 'y': [-15, 15]}
     p: 1.0
 
 valid_transform:

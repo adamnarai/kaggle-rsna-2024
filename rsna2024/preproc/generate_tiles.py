@@ -8,7 +8,9 @@ from tqdm import tqdm
 from rsna2024.utils import natural_sort
 
 
-def get_tile(study_id, series_id, x_coord, y_coord, img_dir, img_num, prop, resolution):
+def get_tile(
+    study_id, series_id, x_coord, y_coord, img_dir, img_num, prop, resolution, norm_coords=False
+):
     x = np.zeros((resolution, resolution, img_num), dtype=np.float32)
     series_dir = os.path.join(img_dir, str(study_id), str(series_id))
     file_list = natural_sort(os.listdir(series_dir))
@@ -29,6 +31,10 @@ def get_tile(study_id, series_id, x_coord, y_coord, img_dir, img_num, prop, reso
         ds = pydicom.dcmread(os.path.join(series_dir, filename))
         img = ds.pixel_array.astype(np.float32)
 
+        if norm_coords and i == 0:
+            x_coord = x_coord * img.shape[1]
+            y_coord = y_coord * img.shape[0]
+
         # Crop ROI
         size = min(*img.shape) * prop
         x1 = round(x_coord - (size / 2))
@@ -44,7 +50,8 @@ def get_tile(study_id, series_id, x_coord, y_coord, img_dir, img_num, prop, reso
         x[..., i] = img
 
     # Standardize image
-    x = (x - x.mean()) / x.std()
+    if x.std() != 0:
+        x = (x - x.mean()) / x.std()
 
     return x
 

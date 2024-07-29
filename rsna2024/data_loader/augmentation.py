@@ -16,20 +16,8 @@ class TransformFactory:
 
 class NoAug(TransformFactory):
     def __init__(self):
-        self.aug = ToTensorV2()
-
-
-class Elastic(TransformFactory):
-    def __init__(self, alpha=1, sigma=50, alpha_affine=50, p=1.0):
         self.aug = A.Compose(
             [
-                A.ElasticTransform(
-                    alpha=alpha,
-                    sigma=sigma,
-                    alpha_affine=alpha_affine,
-                    border_mode=cv2.BORDER_CONSTANT,
-                    p=p,
-                ),
                 ToTensorV2(),
             ]
         )
@@ -38,14 +26,50 @@ class Elastic(TransformFactory):
 class Affine(TransformFactory):
     def __init__(
         self,
-        scale=(0.8, 1.2),
-        translate_percent=(-0.2, 0.2),
-        rotate=(-20, 20),
-        shear=(-20, 20),
+        scale,
+        translate_percent,
+        rotate,
+        shear,
         p=1.0,
     ):
         self.aug = A.Compose(
             [
+                A.Affine(
+                    scale=scale,
+                    translate_percent=translate_percent,
+                    rotate=rotate,
+                    shear=shear,
+                    p=p,
+                ),
+                ToTensorV2(),
+            ]
+        )
+
+
+class CombinedV1(TransformFactory):
+    def __init__(self, scale, translate_percent, rotate, shear, p=1.0):
+        self.aug = A.Compose(
+            [
+                A.OneOf([A.Sharpen(p=0.5), A.MotionBlur(p=0.5)], p=0.5),
+                A.ChannelShuffle(p=0.5),
+                A.Affine(
+                    scale=scale,
+                    translate_percent=translate_percent,
+                    rotate=rotate,
+                    shear=shear,
+                    p=p,
+                ),
+                ToTensorV2(),
+            ]
+        )
+
+
+class CombinedV2(TransformFactory):
+    def __init__(self, scale, translate_percent, rotate, shear, p=1.0):
+        self.aug = A.Compose(
+            [
+                A.OneOf([A.Sharpen(p=0.5), A.MotionBlur(p=0.5)], p=0.5),
+                A.ChannelShuffle(p=0.5),
                 A.Affine(
                     scale=scale,
                     translate_percent=translate_percent,

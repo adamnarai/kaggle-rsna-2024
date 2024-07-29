@@ -82,8 +82,8 @@ class RunnerBase:
         df = pd.read_csv(os.path.join(self.model_dir, 'splits.csv'), dtype={'study_id': 'str'})
         splits = []
         for i in range(1, self.cfg['trainer']['cv_fold'] + 1):
-            df_train = df[(df['fold'] == i) & (df['split'] == 'train')].drop(columns=['fold', 'split'])
-            df_valid = df[(df['fold'] == i) & (df['split'] == 'validation')].drop(columns=['fold', 'split'])
+            df_train = df[(df['fold'] == i) & (df['split'] == 'train')]
+            df_valid = df[(df['fold'] == i) & (df['split'] == 'validation')]
             splits.append((df_train, df_valid))
         return splits
 
@@ -244,7 +244,6 @@ class Runner(RunnerBase):
             preds.append(pred)
             ys.append(y)
         preds = np.concatenate(preds)
-        preds = np.moveaxis(preds, 1, -1)
         ys = np.concatenate(ys)
 
         return preds, ys, data
