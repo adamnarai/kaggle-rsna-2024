@@ -5,7 +5,7 @@ deterministic: True
 benchmark: False
 
 # Wandb
-use_wandb: True
+use_wandb: False
 tags:
   - tiles_sagt2
 notes: ''
@@ -23,17 +23,22 @@ model:
     in_channels: 5
     pretrained: True
 
+dataset:
+  type: TilesSagt2Dataset
+  args:
+    img_num: 5
+    proportion: 0.25
+    resolution: 128
+    data_dir: data/processed
+    labels: *labels
+
 data_loader:
-  type: TilesSagt2DataLoader
+  type: BaseDataLoader
   args:
     batch_size: 16
     num_workers: 8
     pin_memory: True
     shuffle: True
-    img_num: 5
-    resolution: 128
-    proportion: 0.25
-    labels: *labels
 
 train_transform:
   type: Affine

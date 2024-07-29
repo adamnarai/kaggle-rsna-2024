@@ -31,8 +31,15 @@ class RunnerBase:
     def get_device(self):
         return torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 
-    def get_instance(self, module, name, cfg, *args, **kwargs):
-        return getattr(module, cfg[name]['type'])(*args, **kwargs, **cfg[name]['args'])
+    def get_instance(self, module, name, cfg, *args, **kwargs):        
+        
+        # Make weight values torch.tensor
+        cfg_kvargs = cfg[name]['args'].copy()
+        for k, v in cfg_kvargs.items():
+            if k in ['weight'] and isinstance(v, list):
+                cfg_kvargs[k] = torch.tensor(v).to(self.device)
+
+        return getattr(module, cfg[name]['type'])(*args, **kwargs, **cfg_kvargs)
     
     def seed_everything(self):
         seed = self.cfg['seed']

@@ -174,10 +174,13 @@ class SplitDataset(BaseDataset):
 
 
 class SplitCoordDataset(BaseDataset):
-    def __init__(self, df, data_dir, out_vars, img_num, resolution, heatmap_std, transform=None):
+    def __init__(
+        self, df, root_dir, data_dir, out_vars, img_num, resolution, heatmap_std, transform=None
+    ):
         self.df = df
-        self.df_series = self.load_series_info(data_dir)
-        self.df_coordinates = self.load_coordinates_info(data_dir).merge(
+        self.data_dir = os.path.join(root_dir, data_dir)
+        self.df_series = self.load_series_info()
+        self.df_coordinates = self.load_coordinates_info().merge(
             self.df_series, how='left', on=['study_id', 'series_id']
         )
         self.img_dir = os.path.join(data_dir, 'train_images')
@@ -224,10 +227,6 @@ class SplitCoordDataset(BaseDataset):
         if self.transform:
             t1 = self.transform(image=x1, mask=heatmaps)
             x1, heatmaps = t1['image'], t1['mask']
-            # t2 = self.transform(image=x2, keypoints=kp2)
-            # x2, kp2 = t2['image'], t2['keypoints']
-            # t3 = self.transform(image=x3, keypoints=kp3)
-            # x3, kp3 = t3['image'], t3['keypoints']
 
         heatmaps = np.transpose(heatmaps, (2, 0, 1))
 
@@ -330,12 +329,14 @@ class SplitCoordDataset(BaseDataset):
         return x, coordinates, slice_num
 
 
-class TilesSagt2Dataset(Dataset):
-    def __init__(self, df, data_dir, img_num, resolution, proportion, labels, transform=None):
+class TilesSagt2Dataset:
+    def __init__(
+        self, df, root_dir, data_dir, img_num, resolution, proportion, labels, transform=None
+    ):
         self.df = df
+        self.data_dir = os.path.join(root_dir, data_dir)
         self.img_dir = os.path.join(
-            os.path.dirname(data_dir),
-            'processed',
+            self.data_dir,
             'tiles_sagt2',
             f'imgnum{img_num}_prop{int(proportion*100)}_res{resolution}',
         )

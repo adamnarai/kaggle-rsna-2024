@@ -69,11 +69,11 @@ class TilesSagt2Model(nn.Module):
         return self.model(x)
 
 
-class RSNASplitCoordModel(nn.Module):
+class SplitCoordModel(nn.Module):
     def __init__(
         self,
         base_model,
-        encoder_name='resnet34',
+        encoder_name,
         num_classes=None,
         in_channels=None,
         encoder_weights='imagenet',

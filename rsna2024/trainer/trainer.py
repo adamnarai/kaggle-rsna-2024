@@ -146,7 +146,6 @@ class Trainer:
                 y = y.to(self.device, non_blocking=True)
                 
                 pred = self.model(*X)
-                # pred = torch.unflatten(pred, 1, [3, -1])
                 preds.append(pred)
                 ys.append(y)
         preds = torch.cat(preds, dim=0).to('cpu').numpy()
