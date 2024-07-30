@@ -38,7 +38,6 @@ class BaseDataset(Dataset):
         self.resolution = resolution
         self.block_position = block_position
         self.series_mask = series_mask
-        self.series_descriptions = ['Sagittal T1', 'Sagittal T2/STIR', 'Axial T2']
 
     def __len__(self):
         return len(self.df)
@@ -184,7 +183,16 @@ class SplitDataset(BaseDataset):
 
 class SplitCoordDataset(BaseDataset):
     def __init__(
-        self, df, root_dir, data_dir, out_vars, img_num, resolution, heatmap_std, transform=None
+        self,
+        df,
+        root_dir,
+        data_dir,
+        out_vars,
+        img_num,
+        resolution,
+        heatmap_std,
+        series_description='Sagittal T2/STIR',
+        transform=None,
     ):
         self.df = df
         self.data_dir = os.path.join(root_dir, data_dir)
@@ -198,48 +206,48 @@ class SplitCoordDataset(BaseDataset):
         self.img_num = img_num
         self.resolution = resolution
         self.heatmap_std = heatmap_std
-        self.series_descriptions = ['Sagittal T1', 'Sagittal T2/STIR', 'Axial T2']
+        self.series_description = series_description
 
     def __getitem__(self, idx):
         row = self.df.iloc[idx]
 
-        x1, coord1, slicenum1 = self.get_series_with_coord(
-            row.study_id, 'Sagittal T2/STIR', img_num=self.img_num[0]
+        x, coord, slicenum = self.get_series_with_coord(
+            row.study_id, self.series_description, img_num=self.img_num[0]
         )
-        coord1 = np.array(coord1, dtype=np.float32)
-
-        def gaussian_heatmap(width, height, center, std_dev):
-            """
-            Args:
-            - width (int): Width of the heatmap
-            - height (int): Height of the heatmap
-            - center (tuple): The (x, y) coordinates of the Gaussian peak
-            - std_dev (int, optional): Standard deviation of the Gaussian
-
-            """
-            x_axis = torch.arange(width).float() - center[0]
-            y_axis = torch.arange(height).float() - center[1]
-            x, y = torch.meshgrid(y_axis, x_axis, indexing='ij')
-
-            return torch.exp(-((x**2 + y**2) / (2 * std_dev**2)))
+        coord = np.array(coord, dtype=np.float32)
 
         heatmaps = []
         for i in range(5):
-            if np.isnan(coord1[i, :]).any():
+            if np.isnan(coord[i, :]).any():
                 heatmaps.append(torch.zeros(*self.resolution))
             else:
                 heatmaps.append(
-                    gaussian_heatmap(*self.resolution, coord1[i, :], std_dev=self.heatmap_std)
+                    self.gaussian_heatmap(*self.resolution, coord[i, :], std_dev=self.heatmap_std)
                 )
         heatmaps = torch.stack(heatmaps, dim=-1).numpy()
 
         if self.transform:
-            t1 = self.transform(image=x1, mask=heatmaps)
-            x1, heatmaps = t1['image'], t1['mask']
+            t = self.transform(image=x, mask=heatmaps)
+            x, heatmaps = t['image'], t['mask']
 
         heatmaps = np.transpose(heatmaps, (2, 0, 1))
 
-        return x1, heatmaps
+        return x, heatmaps
+
+    def gaussian_heatmap(self, width, height, center, std_dev):
+        """
+        Args:
+        - width (int): Width of the heatmap
+        - height (int): Height of the heatmap
+        - center (tuple): The (x, y) coordinates of the Gaussian peak
+        - std_dev (int, optional): Standard deviation of the Gaussian
+
+        """
+        x_axis = torch.arange(width).float() - center[0]
+        y_axis = torch.arange(height).float() - center[1]
+        x, y = torch.meshgrid(y_axis, x_axis, indexing='ij')
+
+        return torch.exp(-((x**2 + y**2) / (2 * std_dev**2)))
 
     def get_series_with_coord(
         self, study_id, series_description, img_num, series_id_selection='random'
@@ -295,7 +303,27 @@ class SplitCoordDataset(BaseDataset):
             elif row.slice_dir == 0:
                 return row.instance_number_norm
 
-        series_coord_padded['instance_number_norm'] = series_coord_padded.apply(fix_dir, axis=1)
+        if series_description == 'Sagittal T2/STIR':
+            series_coord_padded['instance_number_norm'] = series_coord_padded.apply(fix_dir, axis=1)
+            instance_num = series_coord_padded['instance_number_norm'].values.astype(np.float32)
+        elif series_description == 'Sagittal T1':
+            # Average left and right coordinates
+            series_coord_padded = (
+                series_coord_padded.groupby(['study_id', 'series_id', 'level'])
+                .agg({'x_norm': 'mean', 'y_norm': 'mean', 'slice_dir': 'first'})
+                .reset_index()
+            )
+            series_coord_padded['level'] = (
+                series_coord_padded['level'].str.replace('/', '_').str.lower()
+            )
+            instance_num = None
+
+        coordinates = list(
+            zip(
+                series_coord_padded['x_norm'].values * self.resolution[0],
+                series_coord_padded['y_norm'].values * self.resolution[1],
+            )
+        )
 
         # Select slices
         if slice_num > img_num:
@@ -304,7 +332,13 @@ class SplitCoordDataset(BaseDataset):
                 start_index = (slice_num - img_num) // 2
                 file_list = file_list[start_index : start_index + img_num]
             elif series_description == 'Sagittal T1':
-                raise NotImplementedError('Sagittal T1 slice selection method not implemented')
+                # two blocks of slices at 25% and 75%
+                right_start = round(slice_num * 0.25) - img_num // 4
+                lef_start = round(slice_num * 0.75) - img_num // 4
+                file_list = (
+                    file_list[right_start : right_start + img_num // 2]
+                    + file_list[lef_start : lef_start + img_num // 2]
+                )
             elif series_description == 'Axial T2':
                 raise NotImplementedError('Axial T2 slice selection method not implemented')
         elif slice_num < img_num:
@@ -327,15 +361,7 @@ class SplitCoordDataset(BaseDataset):
         # Standardize series
         x = (x - x.mean()) / x.std()
 
-        coordinates = list(
-            zip(
-                series_coord_padded['x_norm'].values * self.resolution[0],
-                series_coord_padded['y_norm'].values * self.resolution[1],
-            )
-        )
-        slice_num = series_coord_padded['instance_number_norm'].values.astype(np.float32)
-
-        return x, coordinates, slice_num
+        return x, coordinates, instance_num
 
 
 class TilesSagt2Dataset:
@@ -346,7 +372,6 @@ class TilesSagt2Dataset:
         self.data_dir = os.path.join(root_dir, data_dir)
         self.img_dir = os.path.join(
             self.data_dir,
-            'tiles_sagt2',
             f'imgnum{img_num}_prop{int(proportion*100)}_res{resolution}',
         )
         df_tiles = pd.read_csv(
@@ -365,6 +390,41 @@ class TilesSagt2Dataset:
         label = np.nan_to_num(label.astype(float), nan=0).astype(np.int64)
 
         filename = f'{row.study_id}_{row.row_id[-5:]}.npy'
+        x = np.load(os.path.join(self.img_dir, filename))
+
+        if self.transform:
+            x = self.transform(image=x)['image']
+
+        return x, label
+
+
+class TilesSagt1Dataset:
+    def __init__(
+        self, df, root_dir, data_dir, img_num, resolution, proportion, labels, transform=None
+    ):
+        self.df = df
+        self.data_dir = os.path.join(root_dir, data_dir)
+        self.img_dir = os.path.join(
+            self.data_dir,
+            f'imgnum{img_num}_prop{int(proportion*100)}_res{resolution}',
+        )
+        df_tiles = pd.read_csv(
+            os.path.join(self.img_dir, 'info.csv'), dtype={'study_id': 'str', 'series_id': 'str'}
+        )
+        df_tiles['label'] = df_tiles['label'].map(labels)
+        self.df_tiles = df_tiles.merge(self.df[['study_id']], how='inner', on='study_id')
+        self.transform = transform
+
+    def __len__(self):
+        return len(self.df_tiles)
+
+    def __getitem__(self, idx):
+        row = self.df_tiles.iloc[idx]
+        label = row.label
+        label = np.nan_to_num(label.astype(float), nan=0).astype(np.int64)
+
+        side = row.row_id.split('_')[0]
+        filename = f'{row.study_id}_{row.row_id[-5:]}_{side}.npy'
         x = np.load(os.path.join(self.img_dir, filename))
 
         if self.transform:

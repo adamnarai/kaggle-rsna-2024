@@ -7,7 +7,7 @@ benchmark: False
 # Wandb
 use_wandb: True
 tags:
-  - tiles_sagt2
+  - tiles_sagt1
 notes: ''
 
 labels: &labels
@@ -16,7 +16,7 @@ labels: &labels
   Severe: 2
 
 model:
-  type: TilesSagt2Model
+  type: TilesSagt1Model
   args:
     base_model: resnet18
     num_classes: 3
@@ -24,12 +24,12 @@ model:
     pretrained: True
 
 dataset:
-  type: TilesSagt2Dataset
+  type: TilesSagt1Dataset
   args:
     img_num: 5
     proportion: 0.25
     resolution: 128
-    data_dir: data/processed/tiles_sagt2
+    data_dir: data/processed/tiles_sagt1
     labels: *labels
 
 data_loader:
@@ -56,7 +56,7 @@ valid_transform:
 optimizer:
   type: AdamW
   args:
-    lr: 0.003
+    lr: 0.001
 
 loss:
   type: CrossEntropyLoss
@@ -64,14 +64,13 @@ loss:
     weight: [1.0, 2.0, 4.0]
 
 scheduler:
-  type: CosineAnnealingLR
+  type: StepLR
   args:
-    T_max: 10
-    # step_size: 3
-    # gamma: 0.1
+    step_size: 4
+    gamma: 0.1
 
 trainer:
-  epochs: 10
+  epochs: 8
   cv_fold: 5
   one_fold: False
   freeze_epochs: 0

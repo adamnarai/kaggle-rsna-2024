@@ -9,7 +9,16 @@ from rsna2024.utils import natural_sort
 
 
 def get_tile(
-    study_id, series_id, x_coord, y_coord, img_dir, img_num, prop, resolution, norm_coords=False
+    study_id,
+    series_id,
+    x_coord,
+    y_coord,
+    img_dir,
+    img_num,
+    prop,
+    resolution,
+    norm_coords=False,
+    block_position='middle',
 ):
     x = np.zeros((resolution, resolution, img_num), dtype=np.float32)
     series_dir = os.path.join(img_dir, str(study_id), str(series_id))
@@ -24,7 +33,12 @@ def get_tile(
         file_list.reverse()
 
     slice_num = len(file_list)
-    start_index = (slice_num - img_num) // 2
+    if block_position == 'middle':
+        start_index = (slice_num - img_num) // 2
+    elif block_position == 'right':
+        start_index = round(slice_num * 0.26) - img_num // 2
+    elif block_position == 'left':
+        start_index = round(slice_num * 0.70) - img_num // 2
     file_list = file_list[start_index : start_index + img_num]
 
     for i, filename in enumerate(file_list):
@@ -57,11 +71,9 @@ def get_tile(
 
 
 if __name__ == '__main__':
-    # Params
-    img_num = 5
-    prop = 0.25
-    resolution = 128
-
+    # TODO: Remove random sampling from sagt2
+    do_sagt2 = False
+    do_sagt1 = True
     root = '/media/latlab/MR/projects/kaggle-rsna-2024'
     data_dir = os.path.join(root, 'data')
     raw_data_dir = os.path.join(data_dir, 'raw')
@@ -74,39 +86,102 @@ if __name__ == '__main__':
     df_coordinates = pd.read_csv(os.path.join(processed_data_dir, 'train_label_coordinates.csv'))
     df_coordinates = df_coordinates.merge(df_series, how='left', on=['study_id', 'series_id'])
 
-    out_dir = os.path.join(
-        processed_data_dir, 'tiles_sagt2', f'imgnum{img_num}_prop{int(prop*100)}_res{resolution}'
-    )
-    os.makedirs(out_dir, exist_ok=True)
+    # Sagittal T1
+    if do_sagt1:
+        img_num = 5
+        prop = 0.25
+        resolution = 128
 
-    df_coordinates_sagt2 = df_coordinates[
-        df_coordinates['series_description'] == 'Sagittal T2/STIR'
-    ].sample(frac=1, random_state=42)
-
-    img_info_list = []
-    for row in tqdm(df_coordinates_sagt2.itertuples(), total=len(df_coordinates_sagt2)):
-        x = get_tile(
-            study_id=row.study_id,
-            series_id=row.series_id,
-            x_coord=row.x,
-            y_coord=row.y,
-            img_dir=img_dir,
-            img_num=img_num,
-            prop=prop,
-            resolution=resolution,
+        out_dir = os.path.join(
+            processed_data_dir,
+            'tiles_sagt1',
+            f'imgnum{img_num}_prop{int(prop*100)}_res{resolution}',
         )
-        if np.all(x == 0):
-            continue
+        os.makedirs(out_dir, exist_ok=True)
+        df_coordinates_sagt1 = df_coordinates[df_coordinates['series_description'] == 'Sagittal T1']
 
-        filename = f'{row.study_id}_{row.row_id[-5:]}.npy'
-        label = df_train[df_train['study_id'] == row.study_id][row.row_id].values[0]
-        img_info_list.append((row.study_id, row.series_id, row.row_id, filename, label))
+        # Average left and right coordinates
+        # TODO: Remove samples too far away from eachother
+        df_coordinates_sagt1 = (
+            df_coordinates_sagt1.groupby(['study_id', 'series_id', 'level'])[['x', 'y']]
+            .mean()
+            .reset_index()
+        )
+        df_coordinates_sagt1['level'] = (
+            df_coordinates_sagt1['level'].str.replace('/', '_').str.lower()
+        )
 
-        # Save image
-        out_file = os.path.join(out_dir, filename)
-        np.save(out_file, x)
+        img_info_list = []
+        for row in tqdm(df_coordinates_sagt1.itertuples(), total=len(df_coordinates_sagt1)):
+            for side in ['left', 'right']:
+                x = get_tile(
+                    study_id=row.study_id,
+                    series_id=row.series_id,
+                    x_coord=row.x,
+                    y_coord=row.y,
+                    img_dir=img_dir,
+                    img_num=img_num,
+                    prop=prop,
+                    resolution=resolution,
+                    block_position=side,
+                )
+                if np.all(x == 0):
+                    continue
 
-    out_df = pd.DataFrame(
-        img_info_list, columns=['study_id', 'series_id', 'row_id', 'filename', 'label']
-    )
-    out_df.to_csv(os.path.join(out_dir, 'info.csv'), index=False)
+                filename = f'{row.study_id}_{row.level}_{side}.npy'
+                row_id = f'{side}_neural_foraminal_narrowing_{row.level}'
+                label = df_train[df_train['study_id'] == row.study_id][row_id].values[0]
+                img_info_list.append((row.study_id, row.series_id, row_id, filename, label))
+
+                # Save image
+                out_file = os.path.join(out_dir, filename)
+                np.save(out_file, x)
+
+        out_df = pd.DataFrame(
+            img_info_list, columns=['study_id', 'series_id', 'row_id', 'filename', 'label']
+        )
+        out_df.to_csv(os.path.join(out_dir, 'info.csv'), index=False)
+
+    # Sagittal T2/STIR
+    if do_sagt2:
+        img_num = 5
+        prop = 0.25
+        resolution = 128
+
+        out_dir = os.path.join(
+            processed_data_dir,
+            'tiles_sagt2',
+            f'imgnum{img_num}_prop{int(prop*100)}_res{resolution}',
+        )
+        os.makedirs(out_dir, exist_ok=True)
+        df_coordinates_sagt2 = df_coordinates[
+            df_coordinates['series_description'] == 'Sagittal T2/STIR'
+        ].sample(frac=1, random_state=42)
+
+        img_info_list = []
+        for row in tqdm(df_coordinates_sagt2.itertuples(), total=len(df_coordinates_sagt2)):
+            x = get_tile(
+                study_id=row.study_id,
+                series_id=row.series_id,
+                x_coord=row.x,
+                y_coord=row.y,
+                img_dir=img_dir,
+                img_num=img_num,
+                prop=prop,
+                resolution=resolution,
+            )
+            if np.all(x == 0):
+                continue
+
+            filename = f'{row.study_id}_{row.row_id[-5:]}.npy'
+            label = df_train[df_train['study_id'] == row.study_id][row.row_id].values[0]
+            img_info_list.append((row.study_id, row.series_id, row.row_id, filename, label))
+
+            # Save image
+            out_file = os.path.join(out_dir, filename)
+            np.save(out_file, x)
+
+        out_df = pd.DataFrame(
+            img_info_list, columns=['study_id', 'series_id', 'row_id', 'filename', 'label']
+        )
+        out_df.to_csv(os.path.join(out_dir, 'info.csv'), index=False)

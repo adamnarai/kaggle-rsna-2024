@@ -5,9 +5,9 @@ deterministic: True
 benchmark: False
 
 # Wandb
-use_wandb: True
+use_wandb: False
 tags:
-  - coord
+  - coord_sagt1
 notes: ''
 
 labels:
@@ -58,6 +58,7 @@ dataset:
     resolution: [512, 512]
     data_dir: data/raw
     out_vars: *out_vars
+    series_description: 'Sagittal T1'
 
 data_loader:
   type: BaseDataLoader
@@ -68,13 +69,13 @@ data_loader:
     shuffle: True
 
 train_transform:
-  type: Affine
+  type: CombinedV1
   args:
+    scale: [1, 1]
+    translate_percent: [0, 0]
+    rotate: [-15, 15]
+    shear: {'x': [-15, 15], 'y': [-15, 15]}
     p: 1.0
-    scale: [0.9, 1.1]
-    translate_percent: [-0.1, 0.1]
-    rotate: [-10, 10]
-    shear: [-10, 10]
 
 valid_transform:
   type: NoAug
