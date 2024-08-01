@@ -7,6 +7,8 @@ from torch import nn
 
 import wandb
 
+from rsna2024.utils import rsna_lumbar_metric
+
 class Trainer:
     def __init__(self, model, train_loader, valid_loader, loss_fn, optimizer=None, scheduler=None, device=None, state_filename=None, metrics=None, num_epochs=None, wandb_log=False, trainer_type='standard'):
         self.model = model
@@ -50,7 +52,7 @@ class Trainer:
                 test_loss = np.nan
                 metrics = {m: np.nan for m in self.metrics}
                 self.best_metric = np.nan
-            
+
             print(f"lr: {self.scheduler.get_last_lr()}")
             self.scheduler.step()
             print(f"train loss: {train_loss:.4f}, valid loss: {test_loss:.4f}, {metrics}\n")
@@ -64,16 +66,16 @@ class Trainer:
         print(f'Final {metrics}\n')
         self.epoch_count += self.num_epochs
         return
-    
+
     def unfreeze(self):
         for param in self.model.parameters():
             param.requires_grad = True
         return
-    
+
     def train(self):
         num_batches = len(self.train_dataloader)
         self.model.train()
-        
+
         train_loss = 0
         for batch in tqdm(self.train_dataloader, total=num_batches):
             self.optimizer.zero_grad()
@@ -81,7 +83,7 @@ class Trainer:
                 *X, y = batch
                 X = [x.to(self.device, non_blocking=True) for x in X]
                 y = y.to(self.device, non_blocking=True)
-                
+
                 with torch.cuda.amp.autocast():
                     pred = self.model(*X)
                     loss = self.loss_fn(pred, y)
@@ -101,16 +103,17 @@ class Trainer:
     def validate(self):
         num_batches = len(self.valid_dataloader)
         self.model.eval()
-        
+
         valid_loss = 0
         metrics = {m: 0 for m in self.metrics}
+        y_pool, pred_pool = [], []
         with torch.no_grad():
             for batch in tqdm(self.valid_dataloader, total=num_batches):
                 if self.trainer_type == 'standard':
                     *X, y = batch
                     X = [x.to(self.device, non_blocking=True) for x in X]
                     y = y.to(self.device, non_blocking=True)
-                    
+
                     pred = self.model(*X)
                     loss = self.loss_fn(pred, y)
 
@@ -124,27 +127,44 @@ class Trainer:
                         detailed_loss = detailed_loss * len(detailed_loss) / weights[y].sum().to('cpu').numpy()  # Reproduce 'mean' reduction
                         metrics['detailed_loss'] += detailed_loss
 
+                y_pool.append(y)
+                pred_pool.append(pred)
+
+        y_pool = torch.cat(y_pool, dim=0)
+        pred_pool = torch.cat(pred_pool, dim=0)
 
         if 'loss' in metrics.keys():
             metrics['loss'] = valid_loss
+
+        if 'rsna_lumbar_metric' in metrics.keys():
+            solution, submission = rsna_lumbar_metric.prepare_data(y_pool, pred_pool)
+            metrics['rsna_lumbar_metric'] = (
+                rsna_lumbar_metric.score(
+                    solution=solution,
+                    submission=submission,
+                    row_id_column_name='row_id',
+                    any_severe_scalar=1.0,
+                )
+                * num_batches
+            )
 
         valid_loss /= num_batches
         for m in metrics:
             metrics[m] /= num_batches
 
         return valid_loss, metrics
-    
+
     def predict(self):
         num_batches = len(self.valid_dataloader)
         self.model.eval()
-        
+
         preds, ys = [], []
         with torch.no_grad():
             for batch in tqdm(self.valid_dataloader, total=num_batches):
                 *X, y = batch
                 X = [x.to(self.device, non_blocking=True) for x in X]
                 y = y.to(self.device, non_blocking=True)
-                
+
                 pred = self.model(*X)
                 preds.append(pred)
                 ys.append(y)
@@ -152,20 +172,20 @@ class Trainer:
         ys = torch.cat(ys, dim=0).to('cpu').numpy()
 
         return preds, ys
-    
+
     def save_state(self, filename):
         torch.save(self.model.state_dict(), filename)
         return
-    
+
     def load_state(self, filename):
         self.model.load_state_dict(torch.load(filename))
-    
+
     def load_best_state(self):
         self.load_state(self.state_filename.replace('.pt', '_best.pt'))
-    
+
     def get_model(self):
         return self.model
-    
+
     def set_dataloaders(self, dataloaders):
         self.train_dataloader = dataloaders['train']
         self.valid_dataloader = dataloaders['validation']

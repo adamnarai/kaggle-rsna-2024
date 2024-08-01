@@ -101,5 +101,5 @@ trainer:
   cv_fold: 5
   one_fold: False
   freeze_epochs: 0
-  metrics: ['loss']
+  metrics: ['rsna_lumbar_metric']
   type: standard
