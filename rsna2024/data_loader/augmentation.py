@@ -47,29 +47,11 @@ class Affine(TransformFactory):
 
 
 class CombinedV1(TransformFactory):
-    def __init__(self, scale, translate_percent, rotate, shear, p=1.0):
+    def __init__(self, scale, translate_percent, rotate, shear, channel_shuffle_p=0.5, p=1.0):
         self.aug = A.Compose(
             [
                 A.OneOf([A.Sharpen(p=0.5), A.MotionBlur(p=0.5)], p=0.5),
-                A.ChannelShuffle(p=0.5),
-                A.Affine(
-                    scale=scale,
-                    translate_percent=translate_percent,
-                    rotate=rotate,
-                    shear=shear,
-                    p=p,
-                ),
-                ToTensorV2(),
-            ]
-        )
-
-
-class CombinedV2(TransformFactory):
-    def __init__(self, scale, translate_percent, rotate, shear, p=1.0):
-        self.aug = A.Compose(
-            [
-                A.OneOf([A.Sharpen(p=0.5), A.MotionBlur(p=0.5)], p=0.5),
-                A.ChannelShuffle(p=0.5),
+                A.ChannelShuffle(p=channel_shuffle_p),
                 A.Affine(
                     scale=scale,
                     translate_percent=translate_percent,

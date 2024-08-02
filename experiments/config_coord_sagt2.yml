@@ -47,13 +47,13 @@ model:
   args:
     base_model: DeepLabV3Plus
     encoder_name: resnet34
-    num_classes: [5, 0, 0]
-    in_channels: [5, 0, 0]
+    num_classes: 5
+    in_channels: 5
 
 dataset:
   type: SplitCoordDataset
   args:
-    img_num: [5, 0, 0]
+    img_num: 5
     heatmap_std: 10
     resolution: [512, 512]
     data_dir: data/raw

@@ -207,12 +207,16 @@ class SplitCoordDataset(BaseDataset):
         self.resolution = resolution
         self.heatmap_std = heatmap_std
         self.series_description = series_description
+        
+        # TODO: future remove
+        if not isinstance(self.img_num, int) and len(self.img_num) > 1:
+            self.img_num = self.img_num[0]
 
     def __getitem__(self, idx):
         row = self.df.iloc[idx]
 
-        x, coord, slicenum = self.get_series_with_coord(
-            row.study_id, self.series_description, img_num=self.img_num[0]
+        x, coord, instance_num = self.get_series_with_coord(
+            row.study_id, self.series_description, img_num=self.img_num
         )
         coord = np.array(coord, dtype=np.float32)
 
@@ -422,9 +426,45 @@ class TilesSagt1Dataset:
         row = self.df_tiles.iloc[idx]
         label = row.label
         label = np.nan_to_num(label.astype(float), nan=0).astype(np.int64)
-
         side = row.row_id.split('_')[0]
         filename = f'{row.study_id}_{row.row_id[-5:]}_{side}.npy'
+
+        x = np.load(os.path.join(self.img_dir, filename))
+
+        if self.transform:
+            x = self.transform(image=x)['image']
+
+        return x, label
+    
+
+class TilesAxiDataset:
+    def __init__(
+        self, df, root_dir, data_dir, img_num, resolution, proportion, labels, transform=None
+    ):
+        self.df = df
+        self.data_dir = os.path.join(root_dir, data_dir)
+        self.img_dir = os.path.join(
+            self.data_dir,
+            f'imgnum{img_num}_prop{int(proportion*100)}_res{resolution}',
+        )
+        df_tiles = pd.read_csv(
+            os.path.join(self.img_dir, 'info.csv'), dtype={'study_id': 'str', 'series_id': 'str'}
+        )
+        df_tiles['left_label'] = df_tiles['left_label'].map(labels)
+        df_tiles['right_label'] = df_tiles['right_label'].map(labels)
+        self.df_tiles = df_tiles.merge(self.df[['study_id']], how='inner', on='study_id')
+        self.transform = transform
+
+    def __len__(self):
+        return len(self.df_tiles)
+
+    def __getitem__(self, idx):
+        row = self.df_tiles.iloc[idx]
+        left_label = np.nan_to_num(row.left_label.astype(float), nan=0).astype(np.int64)
+        right_label = np.nan_to_num(row.right_label.astype(float), nan=0).astype(np.int64)
+        label = np.array([left_label, right_label])
+
+        filename = f'{row.study_id}_{row.row_id[-5:]}.npy'
         x = np.load(os.path.join(self.img_dir, filename))
 
         if self.transform:

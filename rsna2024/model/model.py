@@ -68,20 +68,12 @@ class TilesSagt2Model(nn.Module):
     def forward(self, x):
         return self.model(x)
     
-class TilesSagt1Model(nn.Module):
-    def __init__(self, base_model, num_classes, in_channels=None, pretrained=True):
-        super().__init__()
-        self.base_model = base_model
-        self.num_classes = num_classes
-        self.model = timm.create_model(
-            model_name=base_model,
-            pretrained=pretrained,
-            num_classes=num_classes,
-            in_chans=in_channels,
-        )
+class TilesSagt1Model(TilesSagt2Model):
+    pass
 
-    def forward(self, x):
-        return self.model(x)
+
+class TilesAxiModel(TilesSagt2Model):
+    pass
 
 
 class SplitCoordModel(nn.Module):
@@ -99,11 +91,17 @@ class SplitCoordModel(nn.Module):
         self.num_classes = num_classes
         self.in_channels = in_channels
         self.encoder_weights = encoder_weights
+        
+        # TODO: future remove
+        if not isinstance(self.num_classes, int) and len(self.num_classes) > 1:
+            self.num_classes = self.num_classes[0]
+        if not isinstance(self.in_channels, int) and len(self.in_channels) > 1:
+            self.in_channels = self.in_channels[0]
 
         self.unet = getattr(smp, self.base_model)(
             encoder_name=self.encoder_name,
-            classes=self.num_classes[0],
-            in_channels=self.in_channels[0],
+            classes=self.num_classes,
+            in_channels=self.in_channels,
             encoder_weights=self.encoder_weights,
         )
 
