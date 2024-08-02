@@ -20,16 +20,16 @@ model:
   args:
     base_model: resnet18
     num_classes: 6
-    in_channels: 5
+    in_channels: 3
     pretrained: True
 
 dataset:
   type: TilesAxiDataset
   args:
-    img_num: 5
-    resolution: 128
-    proportion: 0.25
-    data_dir: data/processed/tiles_axi_from_sagt2
+    img_num: 3
+    resolution: 256
+    proportion: 0.5
+    data_dir: data/processed/tiles_axi_fixpos
     labels: *labels
 
 data_loader:

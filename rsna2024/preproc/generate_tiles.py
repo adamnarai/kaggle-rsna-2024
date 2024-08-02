@@ -69,64 +69,34 @@ def get_tile(
 
     return x
 
-# def get_axi_block(study_id, series_id, img_dir, slice_idx, img_num, resolution, prop, x_coord, y_coord):
-#     x = np.zeros((resolution, resolution, img_num), dtype=np.float32)
-#     series_dir = os.path.join(img_dir, str(study_id), str(series_id))
-#     file_list = natural_sort(os.listdir(series_dir))
-#     slice_num = len(file_list)
-
-#     # Fix direction
-#     ds_first = pydicom.dcmread(os.path.join(series_dir, file_list[0]))
-#     ds_last = pydicom.dcmread(os.path.join(series_dir, file_list[-1]))
-#     pos_diff = np.array(ds_last.ImagePositionPatient) - np.array(ds_first.ImagePositionPatient)
-#     pos_diff = pos_diff[np.abs(pos_diff).argmax()]
-#     if pos_diff < 0:
-#         file_list.reverse()
-#         slice_idx = slice_num - 1 - slice_idx
-
-
-#     start_index = slice_idx - img_num // 2
-#     file_list = file_list[start_index : start_index + img_num]
-
-#     for i, filename in enumerate(file_list):
-#         ds = pydicom.dcmread(os.path.join(series_dir, filename))
-#         img = ds.pixel_array.astype(np.float32)
-        
-#         # Crop ROI
-#         size = min(*img.shape) * prop
-#         x1 = round(x_coord - (size / 2))
-#         x2 = round(x_coord + (size / 2))
-#         y1 = round(y_coord - (size / 2))
-#         y2 = round(y_coord + (size / 2))
-#         if any([x1 < 0, x2 > img.shape[1], y1 < 0, y2 > img.shape[0]]):
-#             break
-#         img = img[y1:y2, x1:x2]
-
-#         # Resize
-#         img = cv2.resize(img, (resolution, resolution), interpolation=cv2.INTER_CUBIC)
-#         x[..., i] = img
-
-#     # Standardize image
-#     if x.std() != 0:
-#         x = (x - x.mean()) / x.std()
-        
-#     return x
-
 def get_axi_block(study_id, series_id, img_dir, slice_idx, img_num, resolution, prop, x_coord, y_coord):
     x = np.zeros((resolution, resolution, img_num), dtype=np.float32)
     series_dir = os.path.join(img_dir, str(study_id), str(series_id))
-    
-    file_list = [str(x) + '.dcm' for x in [slice_idx - 1, slice_idx, slice_idx + 1]]
+    file_list = natural_sort(os.listdir(series_dir))
+    slice_num = len(file_list)
+
+    # Fix direction
+    ds_first = pydicom.dcmread(os.path.join(series_dir, file_list[0]))
+    ds_last = pydicom.dcmread(os.path.join(series_dir, file_list[-1]))
+    pos_diff = np.array(ds_last.ImagePositionPatient) - np.array(ds_first.ImagePositionPatient)
+    pos_diff = pos_diff[np.abs(pos_diff).argmax()]
+    if pos_diff < 0:
+        file_list.reverse()
+        slice_idx = slice_num - 1 - slice_idx
+
+
+    start_index = slice_idx - img_num // 2
+    file_list = file_list[start_index : start_index + img_num]
 
     for i, filename in enumerate(file_list):
-        ds_path = os.path.join(series_dir, filename)
-        if not os.path.exists(ds_path):
-            break
-        ds = pydicom.dcmread(ds_path)
+        ds = pydicom.dcmread(os.path.join(series_dir, filename))
         img = ds.pixel_array.astype(np.float32)
         
         # Crop ROI
         size = min(*img.shape) * prop
+        # TODO: remove
+        x_coord = img.shape[1] // 2
+        y_coord = img.shape[0] // 2
         x1 = round(x_coord - (size / 2))
         x2 = round(x_coord + (size / 2))
         y1 = round(y_coord - (size / 2))
@@ -145,6 +115,7 @@ def get_axi_block(study_id, series_id, img_dir, slice_idx, img_num, resolution, 
         
     return x
 
+
 def get_ds_list(study_id, series_id, img_dir):
     file_list = natural_sort(os.listdir(os.path.join(img_dir, str(study_id), str(series_id))))
     ds_list = [pydicom.dcmread(os.path.join(img_dir, str(study_id), str(series_id), file)) for file in file_list]
@@ -155,11 +126,20 @@ def get_middle_img(study_id, series_id, img_dir):
     ds = pydicom.dcmread(os.path.join(img_dir, str(study_id), str(series_id), file_list[len(file_list) // 2]))
     return ds
 
-def sagi2axi(sag_y, sag_ds, axi_ds_list):
-    axi_z = sag_ds.ImagePositionPatient[2] - sag_y * sag_ds.PixelSpacing[1]
-    z_coords = np.array([ds.ImagePositionPatient[2] for ds in axi_ds_list])
-    axi_slice = np.argmin(abs(z_coords - axi_z))
-    return axi_slice
+def dcm_affine(ds):
+    F11, F21, F31 = ds.ImageOrientationPatient[3:]
+    F12, F22, F32 = ds.ImageOrientationPatient[:3]
+    dr, dc = ds.PixelSpacing
+    Sx, Sy, Sz = ds.ImagePositionPatient
+
+    return np.array(
+        [
+            [F11 * dr, F12 * dc, 0, Sx],
+            [F21 * dr, F22 * dc, 0, Sy],
+            [F31 * dr, F32 * dc, 0, Sz],
+            [0, 0, 0, 1]
+        ]
+    )
 
 
 if __name__ == '__main__':
@@ -288,7 +268,7 @@ if __name__ == '__main__':
 
         out_dir = os.path.join(
             processed_data_dir,
-            'tiles_axi',
+            'tiles_axi_fixpos',
             f'imgnum{img_num}_prop{int(prop*100)}_res{resolution}',
         )
         os.makedirs(out_dir, exist_ok=True)
@@ -302,9 +282,6 @@ if __name__ == '__main__':
 
         img_info_list = []
         for row in tqdm(df_coordinates_axi.itertuples(), total=len(df_coordinates_axi)):
-            level = row.row_id[-5:]
-            axi_ds_list = get_ds_list(row.study_id, row.series_id, img_dir)
-
             # Get matching sagit2
             sagi_row = df_coordinates[
                 (df_coordinates['study_id'] == row.study_id)
@@ -315,9 +292,19 @@ if __name__ == '__main__':
                 continue
             sagi_row = sagi_row.iloc[0]
             sagi_ds = get_middle_img(row.study_id, sagi_row.series_id, img_dir)
-
-            # Get axial slice index
-            axi_slice_idx = sagi2axi(sagi_row.y, sagi_ds, axi_ds_list)
+            
+            # Get world coordinates of sagittal keypoint
+            sagi_affine = dcm_affine(sagi_ds)
+            sagi_coord = np.array([sagi_row.y, sagi_row.x, 0, 1])
+            sagi_world_coord = sagi_affine @ sagi_coord
+            
+            # Get closest axial slice
+            axi_coord_list = []
+            axi_ds_list = get_ds_list(row.study_id, row.series_id, img_dir)
+            for ds in axi_ds_list:
+                affine = dcm_affine(ds)
+                axi_coord_list.append(affine @ np.array([ds.Rows // 2, ds.Columns // 2, 0, 1]))
+            axi_slice_idx = np.argmin([sum((axi_coord - sagi_world_coord)**2) for axi_coord in axi_coord_list])
 
             x = get_axi_block(
                 study_id=row.study_id,
@@ -333,7 +320,7 @@ if __name__ == '__main__':
             if np.all(x == 0):
                 continue
 
-            filename = f'{row.study_id}_{level}.npy'
+            filename = f'{row.study_id}_{row.row_id[-5:]}.npy'
             right_row_id = '_'.join(['right'] + row.row_id.split('_')[1:])
             left_row_id = '_'.join(['left'] + row.row_id.split('_')[1:])
             right_label = df_train[df_train['study_id'] == row.study_id][right_row_id].values[0]
