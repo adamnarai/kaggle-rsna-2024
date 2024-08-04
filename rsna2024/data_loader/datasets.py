@@ -324,8 +324,8 @@ class SplitCoordDataset(BaseDataset):
 
         coordinates = list(
             zip(
-                series_coord_padded['x_norm'].values * self.resolution[0],
-                series_coord_padded['y_norm'].values * self.resolution[1],
+                series_coord_padded['x_norm'].values * self.resolution[1],
+                series_coord_padded['y_norm'].values * self.resolution[0],
             )
         )
 
@@ -450,8 +450,7 @@ class TilesAxiDataset:
         df_tiles = pd.read_csv(
             os.path.join(self.img_dir, 'info.csv'), dtype={'study_id': 'str', 'series_id': 'str'}
         )
-        df_tiles['left_label'] = df_tiles['left_label'].map(labels)
-        df_tiles['right_label'] = df_tiles['right_label'].map(labels)
+        df_tiles['label'] = df_tiles['label'].map(labels)
         self.df_tiles = df_tiles.merge(self.df[['study_id']], how='inner', on='study_id')
         self.transform = transform
 
@@ -460,17 +459,79 @@ class TilesAxiDataset:
 
     def __getitem__(self, idx):
         row = self.df_tiles.iloc[idx]
-        left_label = np.nan_to_num(row.left_label.astype(float), nan=0).astype(np.int64)
-        right_label = np.nan_to_num(row.right_label.astype(float), nan=0).astype(np.int64)
-        label = np.array([left_label, right_label])
+        label = np.nan_to_num(row.label.astype(float), nan=0).astype(np.int64)
 
-        filename = f'{row.study_id}_{row.row_id[-5:]}.npy'
+        filename = f'{row.study_id}_{row.row_id[-5:]}_{row.row_id.split('_')[0]}.npy'
         x = np.load(os.path.join(self.img_dir, filename))
 
         if self.transform:
             x = self.transform(image=x)['image']
 
         return x, label
+    
+class AxiCoordDataset:
+    def __init__(
+        self, df, root_dir, data_dir, img_num, resolution, heatmap_std, proportion, transform=None
+    ):
+        self.df = df
+        self.data_dir = os.path.join(root_dir, data_dir)
+        self.img_dir = os.path.join(
+            self.data_dir,
+            f'imgnum{img_num}_prop{int(proportion*100)}_res{resolution}',
+        )
+        df_tiles = pd.read_csv(
+            os.path.join(self.img_dir, 'info.csv'), dtype={'study_id': 'str', 'series_id': 'str'}
+        )
+        self.df_tiles = df_tiles.merge(self.df[['study_id']], how='inner', on='study_id')
+        self.heatmap_std = heatmap_std
+        self.resolution = resolution
+        self.transform = transform
+
+    def __len__(self):
+        return len(self.df_tiles)
+
+    def __getitem__(self, idx):
+        row = self.df_tiles.iloc[idx]
+        
+        filename = f'{row.study_id}_{row.row_id[-5:]}.npy'
+        x = np.load(os.path.join(self.img_dir, filename))
+
+        coord = np.array([[row.left_x_norm * self.resolution,
+                           row.left_y_norm * self.resolution],
+                          [row.right_x_norm * self.resolution,
+                           row.right_y_norm * self.resolution]], dtype=np.float32)
+        heatmaps = []
+        for i in range(2):
+            if np.isnan(coord[i, :]).any():
+                heatmaps.append(torch.zeros(self.resolution, self.resolution))
+            else:
+                heatmaps.append(
+                    self.gaussian_heatmap(self.resolution, self.resolution, coord[i, :], std_dev=self.heatmap_std)
+                )
+        heatmaps = torch.stack(heatmaps, dim=-1).numpy()
+
+        if self.transform:
+            t = self.transform(image=x, mask=heatmaps)
+            x, heatmaps = t['image'], t['mask']
+
+        heatmaps = np.transpose(heatmaps, (2, 0, 1))
+
+        return x, heatmaps
+
+    def gaussian_heatmap(self, width, height, center, std_dev):
+        """
+        Args:
+        - width (int): Width of the heatmap
+        - height (int): Height of the heatmap
+        - center (tuple): The (x, y) coordinates of the Gaussian peak
+        - std_dev (int, optional): Standard deviation of the Gaussian
+
+        """
+        x_axis = torch.arange(width).float() - center[0]
+        y_axis = torch.arange(height).float() - center[1]
+        x, y = torch.meshgrid(y_axis, x_axis, indexing='ij')
+
+        return torch.exp(-((x**2 + y**2) / (2 * std_dev**2)))
 
 
 class MeanposDataset(BaseDataset):

@@ -19,7 +19,7 @@ model:
   type: TilesAxiModel
   args:
     base_model: resnet18
-    num_classes: 6
+    num_classes: 3
     in_channels: 3
     pretrained: True
 
@@ -27,9 +27,9 @@ dataset:
   type: TilesAxiDataset
   args:
     img_num: 3
-    resolution: 256
-    proportion: 0.5
-    data_dir: data/processed/tiles_axi_fixpos
+    resolution: 128
+    proportion: 0.25
+    data_dir: data/processed/tiles_axi
     labels: *labels
 
 data_loader:
@@ -59,7 +59,7 @@ optimizer:
     lr: 0.001
 
 loss:
-  type: RSNACrossEntropyLoss
+  type: CrossEntropyLoss
   args:
     weight: [1.0, 2.0, 4.0]
 

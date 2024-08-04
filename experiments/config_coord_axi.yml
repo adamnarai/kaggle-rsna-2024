@@ -1,0 +1,102 @@
+project_name: rsna-2024
+seed: 42
+debug: False
+deterministic: True
+benchmark: False
+
+# Wandb
+use_wandb: True
+tags:
+  - coord_axi
+notes: ''
+
+labels:
+  Normal/Mild: 0
+  Moderate: 1
+  Severe: 2
+
+out_vars: &out_vars
+  - spinal_canal_stenosis_l1_l2
+  - spinal_canal_stenosis_l2_l3
+  - spinal_canal_stenosis_l3_l4
+  - spinal_canal_stenosis_l4_l5
+  - spinal_canal_stenosis_l5_s1
+  - left_neural_foraminal_narrowing_l1_l2
+  - left_neural_foraminal_narrowing_l2_l3
+  - left_neural_foraminal_narrowing_l3_l4
+  - left_neural_foraminal_narrowing_l4_l5
+  - left_neural_foraminal_narrowing_l5_s1
+  - right_neural_foraminal_narrowing_l1_l2
+  - right_neural_foraminal_narrowing_l2_l3
+  - right_neural_foraminal_narrowing_l3_l4
+  - right_neural_foraminal_narrowing_l4_l5
+  - right_neural_foraminal_narrowing_l5_s1
+  - left_subarticular_stenosis_l1_l2
+  - left_subarticular_stenosis_l2_l3
+  - left_subarticular_stenosis_l3_l4
+  - left_subarticular_stenosis_l4_l5
+  - left_subarticular_stenosis_l5_s1
+  - right_subarticular_stenosis_l1_l2
+  - right_subarticular_stenosis_l2_l3
+  - right_subarticular_stenosis_l3_l4
+  - right_subarticular_stenosis_l4_l5
+  - right_subarticular_stenosis_l5_s1
+
+model:
+  type: SplitCoordModel
+  args:
+    base_model: DeepLabV3Plus
+    encoder_name: resnet34
+    num_classes: 2
+    in_channels: 3
+
+dataset:
+  type: AxiCoordDataset
+  args:
+    img_num: 3
+    heatmap_std: 10
+    resolution: 512
+    proportion: 1.0
+    data_dir: data/processed/tiles_axi_lr
+
+data_loader:
+  type: BaseDataLoader
+  args:
+    batch_size: 16
+    num_workers: 8
+    pin_memory: True
+    shuffle: True
+
+train_transform:
+  type: CombinedV1
+  args:
+    scale: [1, 1]
+    translate_percent: [0, 0]
+    rotate: [-15, 15]
+    shear: {'x': [-15, 15], 'y': [-15, 15]}
+    p: 1.0
+
+valid_transform:
+  type: NoAug
+  args: {}
+
+optimizer:
+  type: AdamW
+  args:
+    lr: 0.001
+
+loss:
+  type: MSELoss
+  args: {}
+
+scheduler:
+  type: CosineAnnealingLR
+  args:
+    T_max: 10
+
+trainer:
+  epochs: 10
+  cv_fold: 5
+  one_fold: False
+  metrics: ['loss']
+  type: standard

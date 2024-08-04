@@ -11,14 +11,15 @@ from rsna2024.utils import natural_sort
 def get_tile(
     study_id,
     series_id,
-    x_coord,
-    y_coord,
     img_dir,
     img_num,
-    prop,
     resolution,
+    x_coord=None,
+    y_coord=None,
+    prop=1.0,
     norm_coords=False,
     block_position='middle',
+    block_position_relative=False,
 ):
     x = np.zeros((resolution, resolution, img_num), dtype=np.float32)
     series_dir = os.path.join(img_dir, str(study_id), str(series_id))
@@ -31,6 +32,8 @@ def get_tile(
     pos_diff = pos_diff[np.abs(pos_diff).argmax()]
     if pos_diff < 0:
         file_list.reverse()
+        if block_position_relative:
+            block_position = len(file_list) - block_position - 1
 
     slice_num = len(file_list)
     if block_position == 'middle':
@@ -39,6 +42,12 @@ def get_tile(
         start_index = round(slice_num * 0.26) - img_num // 2
     elif block_position == 'left':
         start_index = round(slice_num * 0.70) - img_num // 2
+    elif isinstance(block_position, int):
+        if block_position_relative:
+            start_index = max(block_position - img_num // 2, 0)
+        else:
+            start_index = max([int(file.rstrip('.dcm')) for file in file_list].index(block_position) - img_num // 2, 0)
+        end_index = min(start_index + img_num, slice_num)
     file_list = file_list[start_index : start_index + img_num]
 
     for i, filename in enumerate(file_list):
@@ -50,14 +59,15 @@ def get_tile(
             y_coord = y_coord * img.shape[0]
 
         # Crop ROI
-        size = min(*img.shape) * prop
-        x1 = round(x_coord - (size / 2))
-        x2 = round(x_coord + (size / 2))
-        y1 = round(y_coord - (size / 2))
-        y2 = round(y_coord + (size / 2))
-        if any([x1 < 0, x2 > img.shape[1], y1 < 0, y2 > img.shape[0]]):
-            break
-        img = img[y1:y2, x1:x2]
+        if prop != 1:
+            size = min(*img.shape) * prop
+            x1 = round(x_coord - (size / 2))
+            x2 = round(x_coord + (size / 2))
+            y1 = round(y_coord - (size / 2))
+            y2 = round(y_coord + (size / 2))
+            if any([x1 < 0, x2 > img.shape[1], y1 < 0, y2 > img.shape[0]]):
+                break
+            img = img[y1:y2, x1:x2]
 
         # Resize
         img = cv2.resize(img, (resolution, resolution), interpolation=cv2.INTER_CUBIC)
@@ -68,85 +78,13 @@ def get_tile(
         x = (x - x.mean()) / x.std()
 
     return x
-
-def get_axi_block(study_id, series_id, img_dir, slice_idx, img_num, resolution, prop, x_coord, y_coord):
-    x = np.zeros((resolution, resolution, img_num), dtype=np.float32)
-    series_dir = os.path.join(img_dir, str(study_id), str(series_id))
-    file_list = natural_sort(os.listdir(series_dir))
-    slice_num = len(file_list)
-
-    # Fix direction
-    ds_first = pydicom.dcmread(os.path.join(series_dir, file_list[0]))
-    ds_last = pydicom.dcmread(os.path.join(series_dir, file_list[-1]))
-    pos_diff = np.array(ds_last.ImagePositionPatient) - np.array(ds_first.ImagePositionPatient)
-    pos_diff = pos_diff[np.abs(pos_diff).argmax()]
-    if pos_diff < 0:
-        file_list.reverse()
-        slice_idx = slice_num - 1 - slice_idx
-
-
-    start_index = slice_idx - img_num // 2
-    file_list = file_list[start_index : start_index + img_num]
-
-    for i, filename in enumerate(file_list):
-        ds = pydicom.dcmread(os.path.join(series_dir, filename))
-        img = ds.pixel_array.astype(np.float32)
-        
-        # Crop ROI
-        size = min(*img.shape) * prop
-        # TODO: remove
-        x_coord = img.shape[1] // 2
-        y_coord = img.shape[0] // 2
-        x1 = round(x_coord - (size / 2))
-        x2 = round(x_coord + (size / 2))
-        y1 = round(y_coord - (size / 2))
-        y2 = round(y_coord + (size / 2))
-        if any([x1 < 0, x2 > img.shape[1], y1 < 0, y2 > img.shape[0]]):
-            break
-        img = img[y1:y2, x1:x2]
-
-        # Resize
-        img = cv2.resize(img, (resolution, resolution), interpolation=cv2.INTER_CUBIC)
-        x[..., i] = img
-
-    # Standardize image
-    if x.std() != 0:
-        x = (x - x.mean()) / x.std()
-        
-    return x
-
-
-def get_ds_list(study_id, series_id, img_dir):
-    file_list = natural_sort(os.listdir(os.path.join(img_dir, str(study_id), str(series_id))))
-    ds_list = [pydicom.dcmread(os.path.join(img_dir, str(study_id), str(series_id), file)) for file in file_list]
-    return ds_list   
-
-def get_middle_img(study_id, series_id, img_dir):
-    file_list = natural_sort(os.listdir(os.path.join(img_dir, str(study_id), str(series_id))))
-    ds = pydicom.dcmread(os.path.join(img_dir, str(study_id), str(series_id), file_list[len(file_list) // 2]))
-    return ds
-
-def dcm_affine(ds):
-    F11, F21, F31 = ds.ImageOrientationPatient[3:]
-    F12, F22, F32 = ds.ImageOrientationPatient[:3]
-    dr, dc = ds.PixelSpacing
-    Sx, Sy, Sz = ds.ImagePositionPatient
-
-    return np.array(
-        [
-            [F11 * dr, F12 * dc, 0, Sx],
-            [F21 * dr, F22 * dc, 0, Sy],
-            [F31 * dr, F32 * dc, 0, Sz],
-            [0, 0, 0, 1]
-        ]
-    )
-
 
 if __name__ == '__main__':
     # TODO: Remove random sampling from sagt2
     do_sagt2 = False
     do_sagt1 = False
     do_axi = True
+    do_axi_lr = False
     do_axi_from_sagt2 = False
 
     root = '/media/latlab/MR/projects/kaggle-rsna-2024'
@@ -262,77 +200,105 @@ if __name__ == '__main__':
         out_df.to_csv(os.path.join(out_dir, 'info.csv'), index=False)
 
     if do_axi:
-        img_num = 3
-        prop = 0.5
-        resolution = 256
+        img_num = 5
+        prop = 0.25
+        resolution = 128
 
         out_dir = os.path.join(
             processed_data_dir,
-            'tiles_axi_fixpos',
+            'tiles_axi',
             f'imgnum{img_num}_prop{int(prop*100)}_res{resolution}',
         )
         os.makedirs(out_dir, exist_ok=True)
-        df_coordinates_axi = df_coordinates[df_coordinates['series_description'] == 'Axial T2'].sample(frac=1, random_state=42)
-
-        # Use only one image for the two sides
-        df_coordinates_axi = (
-            df_coordinates_axi.groupby(['study_id', 'series_id', 'level'])
-            .agg({'x': 'mean', 'y': 'mean', 'study_id': 'first', 'series_id': 'first', 'row_id': 'first', 'level': 'first', 'instance_number': 'first'})
-        )
+        df_coordinates_axi = df_coordinates[df_coordinates['series_description'] == 'Axial T2']
 
         img_info_list = []
         for row in tqdm(df_coordinates_axi.itertuples(), total=len(df_coordinates_axi)):
-            # Get matching sagit2
-            sagi_row = df_coordinates[
-                (df_coordinates['study_id'] == row.study_id)
-                & (df_coordinates['series_description'] == 'Sagittal T2/STIR')
-                & (df_coordinates['level'] == row.level)
-            ]
-            if len(sagi_row) == 0:
-                continue
-            sagi_row = sagi_row.iloc[0]
-            sagi_ds = get_middle_img(row.study_id, sagi_row.series_id, img_dir)
-            
-            # Get world coordinates of sagittal keypoint
-            sagi_affine = dcm_affine(sagi_ds)
-            sagi_coord = np.array([sagi_row.y, sagi_row.x, 0, 1])
-            sagi_world_coord = sagi_affine @ sagi_coord
-            
-            # Get closest axial slice
-            axi_coord_list = []
-            axi_ds_list = get_ds_list(row.study_id, row.series_id, img_dir)
-            for ds in axi_ds_list:
-                affine = dcm_affine(ds)
-                axi_coord_list.append(affine @ np.array([ds.Rows // 2, ds.Columns // 2, 0, 1]))
-            axi_slice_idx = np.argmin([sum((axi_coord - sagi_world_coord)**2) for axi_coord in axi_coord_list])
-
-            x = get_axi_block(
+            x = get_tile(
                 study_id=row.study_id,
                 series_id=row.series_id,
-                img_dir=img_dir,
-                slice_idx=axi_slice_idx,
-                img_num=img_num,
-                resolution=resolution,
-                prop=prop,
                 x_coord=row.x,
                 y_coord=row.y,
+                img_dir=img_dir,
+                img_num=img_num,
+                prop=prop,
+                resolution=resolution,
+                block_position=row.instance_number,
             )
             if np.all(x == 0):
+                print(f'Empty block for {row.study_id} study, {row.series_id} series, {row.row_id}')
                 continue
-
-            filename = f'{row.study_id}_{row.row_id[-5:]}.npy'
-            right_row_id = '_'.join(['right'] + row.row_id.split('_')[1:])
-            left_row_id = '_'.join(['left'] + row.row_id.split('_')[1:])
-            right_label = df_train[df_train['study_id'] == row.study_id][right_row_id].values[0]
-            left_label = df_train[df_train['study_id'] == row.study_id][left_row_id].values[0]
-            img_info_list.append((row.study_id, row.series_id, row.row_id, filename, left_label, right_label))
+            
+            filename = f'{row.study_id}_{row.row_id[-5:]}_{row.row_id.split('_')[0]}.npy'
+            label = df_train[df_train['study_id'] == row.study_id][row.row_id].values[0]
+            img_info_list.append((row.study_id, row.series_id, row.row_id, filename, label))
 
             # Save image
             out_file = os.path.join(out_dir, filename)
             np.save(out_file, x)
 
         out_df = pd.DataFrame(
-            img_info_list, columns=['study_id', 'series_id', 'row_id', 'filename', 'left_label', 'right_label']
+            img_info_list, columns=['study_id', 'series_id', 'row_id', 'filename', 'label']
+        )
+        out_df.to_csv(os.path.join(out_dir, 'info.csv'), index=False)
+        
+    if do_axi_lr:
+        img_num = 3
+        prop = 1.0
+        resolution = 512
+
+        out_dir = os.path.join(
+            processed_data_dir,
+            'tiles_axi_lr',
+            f'imgnum{img_num}_prop{int(prop*100)}_res{resolution}',
+        )
+        os.makedirs(out_dir, exist_ok=True)
+        df_coordinates_axi = df_coordinates[df_coordinates['series_description'] == 'Axial T2']
+
+        # Use only one image for the two sides
+        df_coordinates_axi_lr = (
+            df_coordinates_axi.groupby(['study_id', 'series_id', 'level'])
+            .agg({'study_id': 'first', 'series_id': 'first', 'row_id': 'first', 'level': 'first', 'instance_number': 'first'})
+        )
+
+        img_info_list = []
+        for row in tqdm(df_coordinates_axi_lr.itertuples(), total=len(df_coordinates_axi_lr)):
+            x = get_tile(
+                study_id=row.study_id,
+                series_id=row.series_id,
+                img_dir=img_dir,
+                img_num=img_num,
+                prop=1.0,
+                resolution=resolution,
+                block_position=row.instance_number,
+            )
+            if np.all(x == 0):
+                print(f'Empty block for {row.study_id} study, {row.series_id} series, {row.row_id}')
+                continue
+
+            filename = f'{row.study_id}_{row.row_id[-5:]}.npy'
+            left_row_id = '_'.join(['left'] + row.row_id.split('_')[1:])
+            right_row_id = '_'.join(['right'] + row.row_id.split('_')[1:])
+            curr_df = df_coordinates_axi[(df_coordinates_axi['study_id'] == row.study_id)
+                                         & (df_coordinates_axi['series_id'] == row.series_id)]
+            left_coord = curr_df[curr_df['row_id'] == left_row_id]
+            if len(left_coord) == 0:
+                continue
+            left_x_norm = left_coord['x_norm'].values[0]
+            left_y_norm = left_coord['y_norm'].values[0]
+            right_coord = curr_df[curr_df['row_id'] == right_row_id]
+            if len(right_coord) == 0:
+                continue
+            right_x_norm = right_coord['x_norm'].values[0]
+            right_y_norm = right_coord['y_norm'].values[0]
+            img_info_list.append((row.study_id, row.series_id, row.row_id, filename, left_x_norm, left_y_norm, right_x_norm, right_y_norm))
+
+            # Save image
+            out_file = os.path.join(out_dir, filename)
+            np.save(out_file, x)
+
+        out_df = pd.DataFrame(
+            img_info_list, columns=['study_id', 'series_id', 'row_id', 'filename', 'left_x_norm', 'left_y_norm', 'right_x_norm', 'right_y_norm']
         )
         out_df.to_csv(os.path.join(out_dir, 'info.csv'), index=False)
 
