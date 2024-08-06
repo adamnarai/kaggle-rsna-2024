@@ -48,7 +48,7 @@ def get_tile(
         else:
             start_index = max([int(file.rstrip('.dcm')) for file in file_list].index(block_position) - img_num // 2, 0)
         end_index = min(start_index + img_num, slice_num)
-    file_list = file_list[start_index : start_index + img_num]
+    file_list = file_list[start_index : end_index]
 
     for i, filename in enumerate(file_list):
         ds = pydicom.dcmread(os.path.join(series_dir, filename))
