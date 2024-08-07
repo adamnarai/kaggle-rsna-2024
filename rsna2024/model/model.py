@@ -68,7 +68,8 @@ class TilesSagt2Model(nn.Module):
 
     def forward(self, x):
         return self.model(x)
-    
+
+
 class TilesSagt1Model(TilesSagt2Model):
     pass
 
@@ -162,9 +163,10 @@ class RSNAMilSplit(nn.Module):
         feature1 = self.maxpool1(feature1).squeeze(-1)  # (bs, encoder_classes)
         feature2 = self.maxpool2(feature2).squeeze(-1)
         feature3 = self.maxpool3(feature3).squeeze(-1)
-        
+
         x = torch.cat((feature1, feature2, feature3), dim=1)
         return self.classifier(x)
+
 
 class LevelROIModel(nn.Module):
     def __init__(self, base_model, num_classes, in_channels=None, pretrained=True):
@@ -188,7 +190,7 @@ class LevelROIModel(nn.Module):
         x_axi = self.model_axi(x_axi)
         x = self.classifier(torch.cat((x_sagt2, x_axi, level), dim=1))
         return x
-    
+
 
 class SpinalROIModel(nn.Module):
     def __init__(self, base_model, num_classes, in_channels=None, pretrained=True):
@@ -212,7 +214,8 @@ class SpinalROIModel(nn.Module):
         # x_sagt1 = self.model_sagt1(x_sagt1)
         x = self.classifier(torch.cat((x_sagt2, level), dim=1))
         return x
-    
+
+
 class ForaminalROIModel(nn.Module):
     def __init__(self, base_model, num_classes, in_channels=None, pretrained=True):
         super().__init__()
@@ -235,8 +238,8 @@ class ForaminalROIModel(nn.Module):
         x_sagt1 = self.model_sagt1(x_sagt1)
         x = self.classifier(torch.cat((x_sagt1, level), dim=1))
         return x
-    
-    
+
+
 class SubarticularROIModel(nn.Module):
     def __init__(self, base_model, num_classes, in_channels=None, pretrained=True):
         super().__init__()
