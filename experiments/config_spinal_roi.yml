@@ -31,6 +31,8 @@ dataset:
     roi_size: 50
     resolution: 128
     data_dir: data/raw
+    coord_model_names:
+      sagt2: glad-moon-593
 
 data_loader:
   type: BaseDataLoader

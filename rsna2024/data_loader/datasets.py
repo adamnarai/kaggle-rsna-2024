@@ -8,6 +8,7 @@ import cv2
 import warnings
 import logging
 from albumentations.pytorch import ToTensorV2
+import json
 
 import torch
 from torch.utils.data import Dataset
@@ -140,7 +141,7 @@ class Sagt2CoordDataset(Dataset):
         if len(series_list) > 1:
             self.logger.warning('%s %s multiple found', study_id, series_description)
 
-        instance_number = self.most_frequent(series_coords['instance_number'].values)
+        instance_number = self.most_frequent(series_coords['instance_number'].values.tolist())
 
         return series_id, coords, instance_number
 
@@ -301,7 +302,7 @@ class SpinalROIDataset(Dataset):
         coord_model_names={},
         transform=None,
     ):
-        if phase == 'train':
+        if phase == 'train' or phase == 'valid':
             self.img_subdir = 'train_images'
             self.series_filename = 'train_series_descriptions.csv'
         elif phase == 'test':
@@ -327,9 +328,10 @@ class SpinalROIDataset(Dataset):
         ).reset_index()
         self.data_dir = os.path.join(root_dir, data_dir)
         self.df_series = self.load_series_info()
-        self.df_coordinates = self.load_coordinates_info(root_dir).merge(
-            self.df_series, how='left', on=['study_id', 'series_id']
-        )
+        if phase != 'test':
+            self.df_coordinates = self.load_coordinates_info(root_dir).merge(
+                self.df_series, how='left', on=['study_id', 'series_id']
+            )
         self.img_dir = os.path.join(self.data_dir, self.img_subdir)
         self.transform = transform
         self.img_num = img_num
@@ -341,9 +343,9 @@ class SpinalROIDataset(Dataset):
         self.logger.setLevel(logging.ERROR)
         self.handler = logging.FileHandler('level_roi_dataset.log')
         self.logger.addHandler(self.handler)
-        
+
         if phase != 'train':
-            self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+            self.device = 'cpu'
             self.load_coord_models(root_dir, coord_model_names, phase)
 
     def load_coord_models(self, root_dir, coord_model_names, phase):
@@ -352,7 +354,8 @@ class SpinalROIDataset(Dataset):
         self.coord_datasets = {}
         for k, v in coord_model_names.items():
             self.coord_model_dirs[k] = os.path.join(root_dir, 'models', 'rsna-2024-' + v)
-            cfg = load_config(os.path.join(self.coord_model_dirs[k], 'config.json'))
+            with open(os.path.join(self.coord_model_dirs[k], 'config.json')) as f:
+                cfg = json.load(f)
             model_path_list = sorted(
                 [
                     os.path.join(self.coord_model_dirs[k], x)
@@ -370,9 +373,9 @@ class SpinalROIDataset(Dataset):
                 self.coord_models[k].append(model)
 
             self.coord_datasets[k] = getattr(module_data, cfg['dataset']['type'])(
-                df=self.df_orig, root_dir=root_dir, **cfg['model']['args']
+                df=self.df_orig, root_dir=root_dir, **cfg['dataset']['args']
             )
-                
+
     def load_series_info(self):
         return pd.read_csv(
             os.path.join(self.data_dir, self.series_filename),
@@ -402,10 +405,15 @@ class SpinalROIDataset(Dataset):
             self.logger.warning('%s %s multiple found', study_id, series_description)
 
         return series_list
-    
+
     def get_valid_fold_idx(self, model_dir, study_id):
         splits = pd.read_csv(os.path.join(model_dir, 'splits.csv'), dtype={'study_id': 'str'})
-        fold_idx = splits[(splits['study_id'] == study_id) & (splits['split'] == 'validation')]['fold'].values[0] - 1
+        fold_idx = (
+            splits[(splits['study_id'] == study_id) & (splits['split'] == 'validation')][
+                'fold'
+            ].values[0]
+            - 1
+        )
         return fold_idx
 
     def get_sagt2_coord(self, study_id, series_id, level):
@@ -455,7 +463,7 @@ class SpinalROIDataset(Dataset):
 
             # Get coordinates
             level_idx = self.levels.index(level)
-            pred = pred[level_idx]
+            pred = pred[:, level_idx, ...].squeeze()
             y_coord, x_coord = np.unravel_index(pred.argmax(), pred.shape)
             x_norm = x_coord / pred.shape[1]
             y_norm = y_coord / pred.shape[0]
@@ -515,7 +523,7 @@ class SpinalROIDataset(Dataset):
 
             # Get coordinates
             level_idx = self.levels.index(level)
-            pred = pred[level_idx]
+            pred = pred[:, level_idx, ...].squeeze()
             y_coord, x_coord = np.unravel_index(pred.argmax(), pred.shape)
             x_norm = x_coord / pred.shape[1]
             y_norm = y_coord / pred.shape[0]
@@ -547,11 +555,15 @@ class SpinalROIDataset(Dataset):
         else:
             sagt2_series_id = self.get_series(study_id, 'Sagittal T2/STIR')
             sagt2_series_id = sagt2_series_id[0] if sagt2_series_id is not None else None
-            sag_x_norm, sag_y_norm, sag_instance_number = self.get_sagt2_coord(study_id, sagt2_series_id, level)
+            sag_x_norm, sag_y_norm, sag_instance_number = self.get_sagt2_coord(
+                study_id, sagt2_series_id, level
+            )
             sag_dir = os.path.join(self.img_dir, str(study_id), str(sagt2_series_id))
             axi_dir_list = self.get_series(study_id, 'Axial T2')
-            axi_slice_idx = sagi_coord_to_axi_instance_number(sag_x_norm, sag_y_norm, sag_dir, axi_dir_list)
-            
+            axi_slice_idx = sagi_coord_to_axi_instance_number(
+                sag_x_norm, sag_y_norm, sag_dir, axi_dir_list
+            )
+
             transform = ToTensorV2()
 
             # Get data
@@ -576,7 +588,7 @@ class SpinalROIDataset(Dataset):
 
             # Get coordinates
             side_idx = self.sides.index(side)
-            pred = pred[side_idx]
+            pred = pred[:, side_idx, ...].squeeze()
             y_coord, x_coord = np.unravel_index(pred.argmax(), pred.shape)
             x_norm = x_coord / pred.shape[1]
             y_norm = y_coord / pred.shape[0]
@@ -612,7 +624,7 @@ class SpinalROIDataset(Dataset):
         standardize=True,
     ):
         x = np.zeros((resolution, resolution, img_num), dtype=np.float32)
-        if np.isnan(x_norm) or np.isnan(y_norm):
+        if series_id is None or np.isnan(x_norm) or np.isnan(y_norm):
             return x
         series_dir = os.path.join(self.img_dir, str(study_id), str(series_id))
         file_list = natural_sort(os.listdir(series_dir))
@@ -681,7 +693,8 @@ class SpinalROIDataset(Dataset):
 
         # Sagittal T2/STIR central ROI
         sagt2_series_id = self.get_series(row.study_id, 'Sagittal T2/STIR')
-        sagt2_series_id = sagt2_series_id[0] if sagt2_series_id is not None else None
+        if sagt2_series_id is not None:
+            sagt2_series_id = sagt2_series_id[0]
         sagt2_x_norm, sagt2_y_norm, sagt2_instance_number = self.get_sagt2_coord(
             row.study_id, sagt2_series_id, row.level
         )
@@ -789,10 +802,10 @@ class SubarticularROIDataset(ForaminalROIDataset):
         axi_x_norm, axi_y_norm, axi_instance_number, axi_series_id = self.get_axi_coord(
             row.study_id, row.level, row.side
         )
-        
+
         if self.phase == 'train':
             instance_number_type = 'filename'
-        else:    
+        else:
             instance_number_type = 'index'
 
         axi_roi = self.get_roi(
