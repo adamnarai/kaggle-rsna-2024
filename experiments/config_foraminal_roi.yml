@@ -7,7 +7,8 @@ benchmark: False
 # Wandb
 use_wandb: True
 tags:
-  - coord_axi
+  - tiles_axi
+  - foraminal_roi
 notes: ''
 
 labels:
@@ -16,19 +17,19 @@ labels:
   Severe: 2
 
 model:
-  type: CoordModel
+  type: ForaminalROIModel
   args:
-    base_model: DeepLabV3Plus
-    encoder_name: resnet34
-    num_classes: 2
-    in_channels: 3
+    base_model: resnet18
+    num_classes: 3
+    in_channels: 5
+    pretrained: True
 
 dataset:
-  type: AxiCoordDataset
+  type: ForaminalROIDataset
   args:
-    img_num: 3
-    heatmap_std: 10
-    resolution: 512
+    img_num: 5
+    roi_size: 50
+    resolution: 128
     data_dir: data/raw
 
 data_loader:
@@ -58,17 +59,20 @@ optimizer:
     lr: 0.001
 
 loss:
-  type: MSELoss
-  args: {}
+  type: CrossEntropyLoss
+  args:
+    weight: [1.0, 2.0, 4.0]
 
 scheduler:
-  type: CosineAnnealingLR
+  type: StepLR
   args:
-    T_max: 10
+    step_size: 2
+    gamma: 0.1
 
 trainer:
-  epochs: 10
+  epochs: 3
   cv_fold: 5
   one_fold: False
+  freeze_epochs: 0
   metrics: ['loss']
   type: standard

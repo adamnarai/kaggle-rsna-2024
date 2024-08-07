@@ -14,8 +14,6 @@ labels:
   Normal/Mild: 0
   Moderate: 1
   Severe: 2
-
-out_vars: &out_vars
   - spinal_canal_stenosis_l1_l2
   - spinal_canal_stenosis_l2_l3
   - spinal_canal_stenosis_l3_l4
@@ -43,7 +41,7 @@ out_vars: &out_vars
   - right_subarticular_stenosis_l5_s1
 
 model:
-  type: SplitCoordModel
+  type: CoordModel
   args:
     base_model: DeepLabV3Plus
     encoder_name: resnet34
@@ -51,14 +49,12 @@ model:
     in_channels: 5
 
 dataset:
-  type: SplitCoordDataset
+  type: Sagt2CoordDataset
   args:
     img_num: 5
     heatmap_std: 10
-    resolution: [512, 512]
+    resolution: 512
     data_dir: data/raw
-    out_vars: *out_vars
-    series_description: 'Sagittal T2/STIR'
 
 data_loader:
   type: BaseDataLoader

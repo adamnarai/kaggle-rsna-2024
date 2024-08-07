@@ -77,7 +77,7 @@ class TilesAxiModel(TilesSagt2Model):
     pass
 
 
-class SplitCoordModel(nn.Module):
+class CoordModel(nn.Module):
     def __init__(
         self,
         base_model,
@@ -92,12 +92,6 @@ class SplitCoordModel(nn.Module):
         self.num_classes = num_classes
         self.in_channels = in_channels
         self.encoder_weights = encoder_weights
-        
-        # TODO: future remove
-        if not isinstance(self.num_classes, int) and len(self.num_classes) > 1:
-            self.num_classes = self.num_classes[0]
-        if not isinstance(self.in_channels, int) and len(self.in_channels) > 1:
-            self.in_channels = self.in_channels[0]
 
         self.unet = getattr(smp, self.base_model)(
             encoder_name=self.encoder_name,
@@ -196,7 +190,7 @@ class LevelROIModel(nn.Module):
         return x
     
 
-class LevelSideROIModel(nn.Module):
+class SpinalROIModel(nn.Module):
     def __init__(self, base_model, num_classes, in_channels=None, pretrained=True):
         super().__init__()
         self.model_sagt2 = timm.create_model(
@@ -205,16 +199,63 @@ class LevelSideROIModel(nn.Module):
             num_classes=128,
             in_chans=in_channels,
         )
+        # self.model_sagt1 = timm.create_model(
+        #     model_name=base_model,
+        #     pretrained=pretrained,
+        #     num_classes=128,
+        #     in_chans=in_channels,
+        # )
+        self.classifier = nn.Linear(128 + 5, num_classes)
+
+    def forward(self, x_sagt2, level):
+        x_sagt2 = self.model_sagt2(x_sagt2)
+        # x_sagt1 = self.model_sagt1(x_sagt1)
+        x = self.classifier(torch.cat((x_sagt2, level), dim=1))
+        return x
+    
+class ForaminalROIModel(nn.Module):
+    def __init__(self, base_model, num_classes, in_channels=None, pretrained=True):
+        super().__init__()
+        # self.model_sagt2 = timm.create_model(
+        #     model_name=base_model,
+        #     pretrained=pretrained,
+        #     num_classes=128,
+        #     in_chans=in_channels,
+        # )
         self.model_sagt1 = timm.create_model(
             model_name=base_model,
             pretrained=pretrained,
             num_classes=128,
             in_chans=in_channels,
         )
-        self.classifier = nn.Linear(128 + 128 + 5, num_classes)
+        self.classifier = nn.Linear(128 + 5, num_classes)
 
-    def forward(self, x_sagt2, x_sagt1, level):
-        x_sagt2 = self.model_sagt2(x_sagt2)
+    def forward(self, x_sagt1, level):
+        # x_sagt2 = self.model_sagt2(x_sagt2)
         x_sagt1 = self.model_sagt1(x_sagt1)
-        x = self.classifier(torch.cat((x_sagt2, x_sagt1, level), dim=1))
+        x = self.classifier(torch.cat((x_sagt1, level), dim=1))
+        return x
+    
+    
+class SubarticularROIModel(nn.Module):
+    def __init__(self, base_model, num_classes, in_channels=None, pretrained=True):
+        super().__init__()
+        self.model_sagt2 = timm.create_model(
+            model_name=base_model,
+            pretrained=pretrained,
+            num_classes=128,
+            in_chans=in_channels,
+        )
+        self.model_axi = timm.create_model(
+            model_name=base_model,
+            pretrained=pretrained,
+            num_classes=128,
+            in_chans=in_channels,
+        )
+        self.classifier = nn.Linear(128 + 128, num_classes)
+
+    def forward(self, x_axi, x_sagt2, level):
+        x_sagt2 = self.model_sagt2(x_sagt2)
+        x_axi = self.model_axi(x_axi)
+        x = self.classifier(torch.cat((x_axi, x_sagt2), dim=1))
         return x
