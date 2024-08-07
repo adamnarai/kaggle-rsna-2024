@@ -89,7 +89,7 @@ class Sagt2CoordDataset(Dataset):
 
     def create_heatmaps(self, coords):
         heatmaps = []
-        for i in range(5):
+        for i in range(coords.shape[0]):
             if np.isnan(coords[i, :]).any():
                 heatmaps.append(torch.zeros(self.resolution, self.resolution))
             else:
@@ -133,6 +133,11 @@ class Sagt2CoordDataset(Dataset):
 
         series_list = series_coords['series_id'].unique().tolist()
         series_id = self.most_frequent(series_list)
+        if series_id is None:
+            instance_number = np.nan
+        else:
+            # get the first instance number for the series
+            instance_number = self.most_frequent(series_coords[series_coords['series_id'] == series_id]['instance_number'].values.tolist())
 
         if len(series_list) == 0:
             self.logger.warning('%s %s not found', study_id, series_description)
@@ -140,8 +145,6 @@ class Sagt2CoordDataset(Dataset):
 
         if len(series_list) > 1:
             self.logger.warning('%s %s multiple found', study_id, series_description)
-
-        instance_number = self.most_frequent(series_coords['instance_number'].values.tolist())
 
         return series_id, coords, instance_number
 
@@ -227,7 +230,9 @@ class Sagt1CoordDataset(Sagt2CoordDataset):
             row.study_id, 'Sagittal T1'
         )
         # Average left/right coordinates
-        coords = np.nanmean(coords.reshape(2, -1, 2, order='F'), axis=0)
+        with warnings.catch_warnings():
+            warnings.simplefilter('ignore', category=RuntimeWarning)
+            coords = np.nanmean(coords.reshape(2, -1, 2, order='F'), axis=0)
         heatmaps = self.create_heatmaps(coords * self.resolution)
         img_left = self.get_image(
             row.study_id, series_id, instance_number_type='relative', instance_number=0.70
@@ -271,8 +276,6 @@ class AxiCoordDataset(Sagt2CoordDataset):
         series_id, coords, instance_number = self.get_series_with_coords(
             row.study_id, 'Axial T2', level=row.level
         )
-        # Average left/right coordinates
-        coords = np.nanmean(coords.reshape(2, -1, 2, order='F'), axis=0)
         heatmaps = self.create_heatmaps(coords * self.resolution)
         img = self.get_image(
             row.study_id,
@@ -328,10 +331,13 @@ class SpinalROIDataset(Dataset):
         ).reset_index()
         self.data_dir = os.path.join(root_dir, data_dir)
         self.df_series = self.load_series_info()
-        if phase != 'test':
+        if phase == 'train' or phase == 'valid':
             self.df_coordinates = self.load_coordinates_info(root_dir).merge(
                 self.df_series, how='left', on=['study_id', 'series_id']
             )
+        else:
+            # TODO: Load test coordinates
+            pass
         self.img_dir = os.path.join(self.data_dir, self.img_subdir)
         self.transform = transform
         self.img_num = img_num
@@ -344,37 +350,6 @@ class SpinalROIDataset(Dataset):
         self.handler = logging.FileHandler('level_roi_dataset.log')
         self.logger.addHandler(self.handler)
 
-        if phase != 'train':
-            self.device = 'cpu'
-            self.load_coord_models(root_dir, coord_model_names, phase)
-
-    def load_coord_models(self, root_dir, coord_model_names, phase):
-        self.coord_model_dirs = {}
-        self.coord_models = {}
-        self.coord_datasets = {}
-        for k, v in coord_model_names.items():
-            self.coord_model_dirs[k] = os.path.join(root_dir, 'models', 'rsna-2024-' + v)
-            with open(os.path.join(self.coord_model_dirs[k], 'config.json')) as f:
-                cfg = json.load(f)
-            model_path_list = sorted(
-                [
-                    os.path.join(self.coord_model_dirs[k], x)
-                    for x in os.listdir(self.coord_model_dirs[k])
-                    if x.endswith('_best.pt')
-                ]
-            )
-
-            self.coord_models[k] = []
-            for path in model_path_list:
-                model = getattr(module_model, cfg['model']['type'])(**cfg['model']['args'])
-                model.load_state_dict(torch.load(path))
-                model.to(self.device)
-                model.eval()
-                self.coord_models[k].append(model)
-
-            self.coord_datasets[k] = getattr(module_data, cfg['dataset']['type'])(
-                df=self.df_orig, root_dir=root_dir, **cfg['dataset']['args']
-            )
 
     def load_series_info(self):
         return pd.read_csv(
@@ -417,183 +392,71 @@ class SpinalROIDataset(Dataset):
         return fold_idx
 
     def get_sagt2_coord(self, study_id, series_id, level):
-        if self.phase == 'train':
-            level = level.replace('_', '/').upper()
-            coords = self.df_coordinates[
-                (self.df_coordinates['study_id'] == study_id)
-                & (self.df_coordinates['series_id'] == series_id)
-                & (self.df_coordinates['level'] == level)
-            ][['x_norm', 'y_norm', 'instance_number']].values
+        coords = self.df_coordinates[
+            (self.df_coordinates['study_id'] == study_id)
+            & (self.df_coordinates['series_id'] == series_id)
+            & (self.df_coordinates['level'] == level.replace('_', '/').upper())
+        ][['x_norm', 'y_norm', 'instance_number']].values
 
-            if coords.shape[0] == 0:
-                self.logger.warning(
-                    'SAGT2 %s %s %s no coordinates found', study_id, series_id, level
-                )
-                return (np.nan, np.nan, np.nan)
-
-            if coords.shape[0] > 1:
-                self.logger.warning(
-                    'SAGT2 %s %s %s multiple coordinates found', study_id, series_id, level
-                )
-
-            x_norm, y_norm, instance_number = coords[0]
-            return x_norm, y_norm, int(instance_number)
-        else:
-            transform = ToTensorV2()
-
-            # Get data
-            img = self.coord_datasets['sagt2'].get_image(
-                study_id, series_id, instance_number_type='middle'
+        if coords.shape[0] == 0:
+            self.logger.warning(
+                'SAGT2 %s %s %s no coordinates found', study_id, series_id, level
             )
-            img = transform(image=img)['image']
-            img = img.unsqueeze(0)
+            return (np.nan, np.nan, np.nan)
 
-            # Run keypoint detection model
-            if self.phase == 'valid':
-                # Load single model for OOF coordinate prediction
-                fold_idx = self.get_valid_fold_idx(self.coord_model_dirs['sagt2'], study_id)
-                model_list = [self.coord_models['sagt2'][fold_idx]]
-            else:
-                model_list = self.coord_models['sagt2']
-            preds = []
-            with torch.no_grad():
-                for model in model_list:
-                    preds.append(model(img.to(self.device)))
-            pred = torch.stack(preds, dim=0).mean(dim=0)
+        if coords.shape[0] > 1:
+            self.logger.warning(
+                'SAGT2 %s %s %s multiple coordinates found', study_id, series_id, level
+            )
 
-            # Get coordinates
-            level_idx = self.levels.index(level)
-            pred = pred[:, level_idx, ...].squeeze()
-            y_coord, x_coord = np.unravel_index(pred.argmax(), pred.shape)
-            x_norm = x_coord / pred.shape[1]
-            y_norm = y_coord / pred.shape[0]
-
-            return x_norm, y_norm, np.nan
+        x_norm, y_norm, instance_number = coords[0]
+        return x_norm, y_norm, int(instance_number)
 
     def get_sagt1_coord(self, study_id, series_id, level, side):
-        if self.phase == 'train':
-            df_coordinates_filtered = self.df_coordinates[
-                (self.df_coordinates['study_id'] == study_id)
-                & (self.df_coordinates['series_id'] == series_id)
-                & (self.df_coordinates['level'] == level.replace('_', '/').upper())
-            ]
-            coords = df_coordinates_filtered[
-                df_coordinates_filtered['row_id'].str.startswith(side)
-            ][['x_norm', 'y_norm', 'instance_number']].values
+        df_coordinates_filtered = self.df_coordinates[
+            (self.df_coordinates['study_id'] == study_id)
+            & (self.df_coordinates['series_id'] == series_id)
+            & (self.df_coordinates['level'] == level.replace('_', '/').upper())
+        ]
+        coords = df_coordinates_filtered[
+            df_coordinates_filtered['row_id'].str.startswith(side)
+        ][['x_norm', 'y_norm', 'instance_number']].values
 
-            if coords.shape[0] == 0:
-                self.logger.warning(
-                    'SAGT1 %s %s %s %s no coordinates found', study_id, series_id, level, side
-                )
-                return np.nan, np.nan, np.nan
-
-            if coords.shape[0] > 1:
-                self.logger.warning(
-                    'SAGT1 %s %s %s %s multiple coordinates found', study_id, series_id, level, side
-                )
-
-            x_norm, y_norm, instance_number = coords[0]
-            return x_norm, y_norm, int(instance_number)
-        else:
-            transform = ToTensorV2()
-
-            # Get data
-            img_left = self.coord_datasets['sagt1'].get_image(
-                study_id, series_id, instance_number_type='relative', instance_number=0.70
+        if coords.shape[0] == 0:
+            self.logger.warning(
+                'SAGT1 %s %s %s %s no coordinates found', study_id, series_id, level, side
             )
-            img_right = self.coord_datasets['sagt1'].get_image(
-                study_id, series_id, instance_number_type='relative', instance_number=0.26
+            return np.nan, np.nan, np.nan
+
+        if coords.shape[0] > 1:
+            self.logger.warning(
+                'SAGT1 %s %s %s %s multiple coordinates found', study_id, series_id, level, side
             )
-            img = np.concatenate([img_left, img_right], axis=-1)
-            img = transform(image=img)['image']
-            img = img.unsqueeze(0)
 
-            # Run keypoint detection model
-            if self.phase == 'valid':
-                # Load single model for OOF coordinate prediction
-                fold_idx = self.get_valid_fold_idx(self.coord_model_dirs['sagt1'], study_id)
-                model_list = [self.coord_models['sagt1'][fold_idx]]
-            else:
-                model_list = self.coord_models['sagt1']
-            preds = []
-            with torch.no_grad():
-                for model in model_list:
-                    preds.append(model(img.to(self.device)))
-            pred = torch.stack(preds, dim=0).mean(dim=0)
-
-            # Get coordinates
-            level_idx = self.levels.index(level)
-            pred = pred[:, level_idx, ...].squeeze()
-            y_coord, x_coord = np.unravel_index(pred.argmax(), pred.shape)
-            x_norm = x_coord / pred.shape[1]
-            y_norm = y_coord / pred.shape[0]
-
-            return x_norm, y_norm, np.nan
+        x_norm, y_norm, instance_number = coords[0]
+        return x_norm, y_norm, int(instance_number)
 
     def get_axi_coord(self, study_id, level, side):
-        if self.phase == 'train':
-            df_coordinates_filtered = self.df_coordinates[
-                (self.df_coordinates['study_id'] == study_id)
-                & (self.df_coordinates['series_description'] == 'Axial T2')
-                & (self.df_coordinates['level'] == level.replace('_', '/').upper())
-            ]
-            coords = df_coordinates_filtered[
-                df_coordinates_filtered['row_id'].str.startswith(side)
-            ][['x_norm', 'y_norm', 'instance_number', 'series_id']].values
+        df_coordinates_filtered = self.df_coordinates[
+            (self.df_coordinates['study_id'] == study_id)
+            & (self.df_coordinates['series_description'] == 'Axial T2')
+            & (self.df_coordinates['level'] == level.replace('_', '/').upper())
+        ]
+        coords = df_coordinates_filtered[
+            df_coordinates_filtered['row_id'].str.startswith(side)
+        ][['x_norm', 'y_norm', 'instance_number', 'series_id']].values
 
-            if coords.shape[0] == 0:
-                self.logger.warning('AXI %s %s %s no coordinates found', study_id, level, side)
-                return np.nan, np.nan, np.nan, ''
+        if coords.shape[0] == 0:
+            self.logger.warning('AXI %s %s %s no coordinates found', study_id, level, side)
+            return np.nan, np.nan, np.nan, ''
 
-            if coords.shape[0] > 1:
-                self.logger.warning(
-                    'AXI %s %s %s multiple coordinates found', study_id, level, side
-                )
-
-            x_norm, y_norm, instance_number, series_id = coords[0]
-            return x_norm, y_norm, int(instance_number), str(series_id)
-        else:
-            sagt2_series_id = self.get_series(study_id, 'Sagittal T2/STIR')
-            sagt2_series_id = sagt2_series_id[0] if sagt2_series_id is not None else None
-            sag_x_norm, sag_y_norm, sag_instance_number = self.get_sagt2_coord(
-                study_id, sagt2_series_id, level
-            )
-            sag_dir = os.path.join(self.img_dir, str(study_id), str(sagt2_series_id))
-            axi_dir_list = self.get_series(study_id, 'Axial T2')
-            axi_slice_idx = sagi_coord_to_axi_instance_number(
-                sag_x_norm, sag_y_norm, sag_dir, axi_dir_list
+        if coords.shape[0] > 1:
+            self.logger.warning(
+                'AXI %s %s %s multiple coordinates found', study_id, level, side
             )
 
-            transform = ToTensorV2()
-
-            # Get data
-            img = self.coord_datasets['axi'].get_image(
-                study_id, series_id, instance_number_type='index', instance_number=axi_slice_idx
-            )
-            img = transform(image=img)['image']
-            img = img.unsqueeze(0)
-
-            # Run keypoint detection model
-            if self.phase == 'valid':
-                # Load single model for OOF coordinate prediction
-                fold_idx = self.get_valid_fold_idx(self.coord_model_dirs['axi'], study_id)
-                model_list = [self.coord_models['axi'][fold_idx]]
-            else:
-                model_list = self.coord_models['axi']
-            preds = []
-            with torch.no_grad():
-                for model in model_list:
-                    preds.append(model(img.to(self.device)))
-            pred = torch.stack(preds, dim=0).mean(dim=0)
-
-            # Get coordinates
-            side_idx = self.sides.index(side)
-            pred = pred[:, side_idx, ...].squeeze()
-            y_coord, x_coord = np.unravel_index(pred.argmax(), pred.shape)
-            x_norm = x_coord / pred.shape[1]
-            y_norm = y_coord / pred.shape[0]
-
-            return x_norm, y_norm, axi_slice_idx
+        x_norm, y_norm, instance_number, series_id = coords[0]
+        return x_norm, y_norm, int(instance_number), str(series_id)
 
     def get_labels(self, idx, label_name, level_name, side_name=None):
         label = self.df[label_name].iloc[idx]

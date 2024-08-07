@@ -31,8 +31,6 @@ dataset:
     roi_size: 50
     resolution: 128
     data_dir: data/raw
-    coord_model_names:
-      sagt2: glad-moon-593
 
 data_loader:
   type: BaseDataLoader
@@ -72,7 +70,7 @@ scheduler:
     gamma: 0.1
 
 trainer:
-  epochs: 3
+  epochs: 5
   cv_fold: 5
   one_fold: False
   freeze_epochs: 0
