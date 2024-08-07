@@ -12,8 +12,9 @@ from albumentations.pytorch import ToTensorV2
 import torch
 from torch.utils.data import Dataset
 
-from rsna2024.utils import natural_sort, load_config
+from rsna2024.utils import natural_sort, load_config, sagi_coord_to_axi_instance_number
 from rsna2024 import model as module_model
+import rsna2024.data_loader as module_data
 
 
 class Sagt2CoordDataset(Dataset):
@@ -297,20 +298,19 @@ class SpinalROIDataset(Dataset):
         resolution,
         roi_size,
         phase='train',
-        kp_model_names={},
+        coord_model_names={},
         transform=None,
     ):
-        if phase == 'test':
-            self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-            self.img_subdir = 'test_images'
-            self.series_filename = 'test_series_descriptions.csv'
-            self.load_kp_models(root_dir, kp_model_names)
-        else:
+        if phase == 'train':
             self.img_subdir = 'train_images'
             self.series_filename = 'train_series_descriptions.csv'
+        elif phase == 'test':
+            self.img_subdir = 'test_images'
+            self.series_filename = 'test_series_descriptions.csv'
 
         self.levels = ['l1_l2', 'l2_l3', 'l3_l4', 'l4_l5', 'l5_s1']
         self.sides = ['left', 'right']
+        self.df_orig = df
         self.df = pd.wide_to_long(
             df,
             [
@@ -341,28 +341,38 @@ class SpinalROIDataset(Dataset):
         self.logger.setLevel(logging.ERROR)
         self.handler = logging.FileHandler('level_roi_dataset.log')
         self.logger.addHandler(self.handler)
+        
+        if phase != 'train':
+            self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+            self.load_coord_models(root_dir, coord_model_names, phase)
 
-    def load_kp_models(self, root_dir, kp_model_names):
-        self.kp_models = {}
-        for k, v in kp_model_names.items():
-            model_dir = os.path.join(root_dir, 'models', 'rsna-2024-' + v)
-            cfg = load_config(os.path.join(model_dir, 'config.json'))
+    def load_coord_models(self, root_dir, coord_model_names, phase):
+        self.coord_model_dirs = {}
+        self.coord_models = {}
+        self.coord_datasets = {}
+        for k, v in coord_model_names.items():
+            self.coord_model_dirs[k] = os.path.join(root_dir, 'models', 'rsna-2024-' + v)
+            cfg = load_config(os.path.join(self.coord_model_dirs[k], 'config.json'))
             model_path_list = sorted(
                 [
-                    os.path.join(model_dir, x)
-                    for x in os.listdir(model_dir)
+                    os.path.join(self.coord_model_dirs[k], x)
+                    for x in os.listdir(self.coord_model_dirs[k])
                     if x.endswith('_best.pt')
                 ]
             )
 
-            self.kp_models[k] = []
+            self.coord_models[k] = []
             for path in model_path_list:
                 model = getattr(module_model, cfg['model']['type'])(**cfg['model']['args'])
                 model.load_state_dict(torch.load(path))
                 model.to(self.device)
                 model.eval()
-                self.kp_models[k].append(model)
+                self.coord_models[k].append(model)
 
+            self.coord_datasets[k] = getattr(module_data, cfg['dataset']['type'])(
+                df=self.df_orig, root_dir=root_dir, **cfg['model']['args']
+            )
+                
     def load_series_info(self):
         return pd.read_csv(
             os.path.join(self.data_dir, self.series_filename),
@@ -392,6 +402,11 @@ class SpinalROIDataset(Dataset):
             self.logger.warning('%s %s multiple found', study_id, series_description)
 
         return series_list
+    
+    def get_valid_fold_idx(self, model_dir, study_id):
+        splits = pd.read_csv(os.path.join(model_dir, 'splits.csv'), dtype={'study_id': 'str'})
+        fold_idx = splits[(splits['study_id'] == study_id) & (splits['split'] == 'validation')]['fold'].values[0] - 1
+        return fold_idx
 
     def get_sagt2_coord(self, study_id, series_id, level):
         if self.phase == 'train':
@@ -415,19 +430,26 @@ class SpinalROIDataset(Dataset):
 
             x_norm, y_norm, instance_number = coords[0]
             return x_norm, y_norm, int(instance_number)
-        elif self.phase == 'test':
+        else:
             transform = ToTensorV2()
 
             # Get data
-            # TODO: define the relevant dataloader and get specific data based on study_id and series_id
-            img = []
+            img = self.coord_datasets['sagt2'].get_image(
+                study_id, series_id, instance_number_type='middle'
+            )
             img = transform(image=img)['image']
             img = img.unsqueeze(0)
 
             # Run keypoint detection model
+            if self.phase == 'valid':
+                # Load single model for OOF coordinate prediction
+                fold_idx = self.get_valid_fold_idx(self.coord_model_dirs['sagt2'], study_id)
+                model_list = [self.coord_models['sagt2'][fold_idx]]
+            else:
+                model_list = self.coord_models['sagt2']
             preds = []
             with torch.no_grad():
-                for model in self.kp_models['sagt2']:
+                for model in model_list:
                     preds.append(model(img.to(self.device)))
             pred = torch.stack(preds, dim=0).mean(dim=0)
 
@@ -442,11 +464,10 @@ class SpinalROIDataset(Dataset):
 
     def get_sagt1_coord(self, study_id, series_id, level, side):
         if self.phase == 'train':
-            level = level.replace('_', '/').upper()
             df_coordinates_filtered = self.df_coordinates[
                 (self.df_coordinates['study_id'] == study_id)
                 & (self.df_coordinates['series_id'] == series_id)
-                & (self.df_coordinates['level'] == level)
+                & (self.df_coordinates['level'] == level.replace('_', '/').upper())
             ]
             coords = df_coordinates_filtered[
                 df_coordinates_filtered['row_id'].str.startswith(side)
@@ -465,14 +486,48 @@ class SpinalROIDataset(Dataset):
 
             x_norm, y_norm, instance_number = coords[0]
             return x_norm, y_norm, int(instance_number)
+        else:
+            transform = ToTensorV2()
+
+            # Get data
+            img_left = self.coord_datasets['sagt1'].get_image(
+                study_id, series_id, instance_number_type='relative', instance_number=0.70
+            )
+            img_right = self.coord_datasets['sagt1'].get_image(
+                study_id, series_id, instance_number_type='relative', instance_number=0.26
+            )
+            img = np.concatenate([img_left, img_right], axis=-1)
+            img = transform(image=img)['image']
+            img = img.unsqueeze(0)
+
+            # Run keypoint detection model
+            if self.phase == 'valid':
+                # Load single model for OOF coordinate prediction
+                fold_idx = self.get_valid_fold_idx(self.coord_model_dirs['sagt1'], study_id)
+                model_list = [self.coord_models['sagt1'][fold_idx]]
+            else:
+                model_list = self.coord_models['sagt1']
+            preds = []
+            with torch.no_grad():
+                for model in model_list:
+                    preds.append(model(img.to(self.device)))
+            pred = torch.stack(preds, dim=0).mean(dim=0)
+
+            # Get coordinates
+            level_idx = self.levels.index(level)
+            pred = pred[level_idx]
+            y_coord, x_coord = np.unravel_index(pred.argmax(), pred.shape)
+            x_norm = x_coord / pred.shape[1]
+            y_norm = y_coord / pred.shape[0]
+
+            return x_norm, y_norm, np.nan
 
     def get_axi_coord(self, study_id, level, side):
         if self.phase == 'train':
-            level = level.replace('_', '/').upper()
             df_coordinates_filtered = self.df_coordinates[
                 (self.df_coordinates['study_id'] == study_id)
                 & (self.df_coordinates['series_description'] == 'Axial T2')
-                & (self.df_coordinates['level'] == level)
+                & (self.df_coordinates['level'] == level.replace('_', '/').upper())
             ]
             coords = df_coordinates_filtered[
                 df_coordinates_filtered['row_id'].str.startswith(side)
@@ -489,6 +544,44 @@ class SpinalROIDataset(Dataset):
 
             x_norm, y_norm, instance_number, series_id = coords[0]
             return x_norm, y_norm, int(instance_number), str(series_id)
+        else:
+            sagt2_series_id = self.get_series(study_id, 'Sagittal T2/STIR')
+            sagt2_series_id = sagt2_series_id[0] if sagt2_series_id is not None else None
+            sag_x_norm, sag_y_norm, sag_instance_number = self.get_sagt2_coord(study_id, sagt2_series_id, level)
+            sag_dir = os.path.join(self.img_dir, str(study_id), str(sagt2_series_id))
+            axi_dir_list = self.get_series(study_id, 'Axial T2')
+            axi_slice_idx = sagi_coord_to_axi_instance_number(sag_x_norm, sag_y_norm, sag_dir, axi_dir_list)
+            
+            transform = ToTensorV2()
+
+            # Get data
+            img = self.coord_datasets['axi'].get_image(
+                study_id, series_id, instance_number_type='index', instance_number=axi_slice_idx
+            )
+            img = transform(image=img)['image']
+            img = img.unsqueeze(0)
+
+            # Run keypoint detection model
+            if self.phase == 'valid':
+                # Load single model for OOF coordinate prediction
+                fold_idx = self.get_valid_fold_idx(self.coord_model_dirs['axi'], study_id)
+                model_list = [self.coord_models['axi'][fold_idx]]
+            else:
+                model_list = self.coord_models['axi']
+            preds = []
+            with torch.no_grad():
+                for model in model_list:
+                    preds.append(model(img.to(self.device)))
+            pred = torch.stack(preds, dim=0).mean(dim=0)
+
+            # Get coordinates
+            side_idx = self.sides.index(side)
+            pred = pred[side_idx]
+            y_coord, x_coord = np.unravel_index(pred.argmax(), pred.shape)
+            x_norm = x_coord / pred.shape[1]
+            y_norm = y_coord / pred.shape[0]
+
+            return x_norm, y_norm, axi_slice_idx
 
     def get_labels(self, idx, label_name, level_name, side_name=None):
         label = self.df[label_name].iloc[idx]
@@ -603,43 +696,10 @@ class SpinalROIDataset(Dataset):
             instance_number_type='middle',
         )
 
-        # Axial T2 central ROI
-        axi_left_x_norm, axi_left_y_norm, axi_left_instance_number, axi_left_series_id = (
-            self.get_axi_coord(row.study_id, row.level, 'left')
-        )
-        axi_right_x_norm, axi_right_y_norm, axi_right_instance_number, axi_right_series_id = (
-            self.get_axi_coord(row.study_id, row.level, 'right')
-        )
-
-        with warnings.catch_warnings():
-            warnings.simplefilter('ignore', category=RuntimeWarning)
-            axi_x_norm = np.nanmean([axi_left_x_norm, axi_right_x_norm])
-            axi_y_norm = np.nanmean([axi_left_y_norm, axi_right_y_norm])
-        if not np.isnan(axi_left_instance_number):
-            axi_instance_number = axi_left_instance_number
-            axi_series_id = axi_left_series_id
-        else:
-            axi_instance_number = axi_right_instance_number
-            axi_series_id = axi_right_series_id
-
-        axi_roi = self.get_roi(
-            study_id=row.study_id,
-            series_id=axi_series_id,
-            img_num=self.img_num,
-            resolution=self.resolution,
-            roi_size=self.roi_size,
-            x_norm=axi_x_norm,
-            y_norm=axi_y_norm,
-            instance_number_type='filename',
-            instance_number=axi_instance_number,
-        )
-
         if self.transform:
             sagt2_roi = self.transform(image=sagt2_roi)['image']
-            # sagt1_roi = self.transform(image=sagt1_roi)['image']
-            axi_roi = self.transform(image=axi_roi)['image']
 
-        return sagt2_roi, axi_roi, level, label
+        return sagt2_roi, level, label
 
 
 class ForaminalROIDataset(SpinalROIDataset):
@@ -702,23 +762,6 @@ class SubarticularROIDataset(ForaminalROIDataset):
         row = self.df.iloc[idx]
         label, level, side = self.get_labels(idx, 'subarticular_stenosis', row.level, row.side)
 
-        # # Sagittal T2/STIR central ROI
-        # sagt2_series_id = self.get_series(row.study_id, 'Sagittal T2/STIR')
-        # sagt2_series_id = sagt2_series_id[0] if sagt2_series_id is not None else None
-        # sagt2_x_norm, sagt2_y_norm, sagt2_instance_number = self.get_sagt2_coord(
-        #     row.study_id, sagt2_series_id, row.level
-        # )
-        # sagt2_roi = self.get_roi(
-        #     study_id=row.study_id,
-        #     series_id=sagt2_series_id,
-        #     img_num=self.img_num,
-        #     resolution=self.resolution,
-        #     roi_size=self.roi_size,
-        #     x_norm=sagt2_x_norm,
-        #     y_norm=sagt2_y_norm,
-        #     instance_number_type='middle',
-        # )
-
         # Sagittal T1 central ROI
         sagt1_series_id = self.get_series(row.study_id, 'Sagittal T1')
         sagt1_series_id = sagt1_series_id[0] if sagt1_series_id is not None else None
@@ -746,6 +789,11 @@ class SubarticularROIDataset(ForaminalROIDataset):
         axi_x_norm, axi_y_norm, axi_instance_number, axi_series_id = self.get_axi_coord(
             row.study_id, row.level, row.side
         )
+        
+        if self.phase == 'train':
+            instance_number_type = 'filename'
+        else:    
+            instance_number_type = 'index'
 
         axi_roi = self.get_roi(
             study_id=row.study_id,
@@ -755,7 +803,7 @@ class SubarticularROIDataset(ForaminalROIDataset):
             roi_size=self.roi_size,
             x_norm=axi_x_norm,
             y_norm=axi_y_norm,
-            instance_number_type='filename',
+            instance_number_type=instance_number_type,
             instance_number=axi_instance_number,
         )
 

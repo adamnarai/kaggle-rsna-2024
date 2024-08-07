@@ -54,28 +54,6 @@ class SplitModel(nn.Module):
         return self.classifier(x)
 
 
-class TilesSagt2Model(nn.Module):
-    def __init__(self, base_model, num_classes, in_channels=None, pretrained=True):
-        super().__init__()
-        self.base_model = base_model
-        self.num_classes = num_classes
-        self.model = timm.create_model(
-            model_name=base_model,
-            pretrained=pretrained,
-            num_classes=num_classes,
-            in_chans=in_channels,
-        )
-
-    def forward(self, x):
-        return self.model(x)
-
-
-class TilesSagt1Model(TilesSagt2Model):
-    pass
-
-
-class TilesAxiModel(TilesSagt2Model):
-    pass
 
 
 class CoordModel(nn.Module):
@@ -105,92 +83,6 @@ class CoordModel(nn.Module):
         return self.unet(x)
 
 
-class RSNAMilSplit(nn.Module):
-    def __init__(
-        self,
-        base_model,
-        num_classes,
-        pretrained=True,
-        in_channels=None,
-        resolution=None,
-        instance_num=None,
-    ):
-        super().__init__()
-        self.base_model = base_model
-        self.num_classes = num_classes
-        self.in_channels = in_channels
-        self.resolution = resolution
-        self.instance_num = instance_num
-        self.encoder_classes = 128
-        self.model1 = timm.create_model(
-            model_name=self.base_model,
-            pretrained=pretrained,
-            num_classes=self.encoder_classes,
-            in_chans=in_channels[0],
-        )
-        self.model2 = timm.create_model(
-            model_name=self.base_model,
-            pretrained=pretrained,
-            num_classes=self.encoder_classes,
-            in_chans=in_channels[1],
-        )
-        self.model3 = timm.create_model(
-            model_name=self.base_model,
-            pretrained=pretrained,
-            num_classes=self.encoder_classes,
-            in_chans=in_channels[2],
-        )
-        self.maxpool1 = nn.AdaptiveMaxPool1d(1)
-        self.maxpool2 = nn.AdaptiveMaxPool1d(1)
-        self.maxpool3 = nn.AdaptiveMaxPool1d(1)
-        self.classifier = nn.Linear(3 * self.encoder_classes, self.num_classes)
-
-    def forward(self, x1, x2, x3):
-        x1 = x1.view(
-            -1, self.in_channels[0], *x1.shape[-2:]
-        )  # (bs*instance_num, in_channels, H, W)
-        x2 = x2.view(-1, self.in_channels[1], *x2.shape[-2:])
-        x3 = x3.view(-1, self.in_channels[2], *x3.shape[-2:])
-        feature1 = (
-            self.model1(x1).view(-1, self.instance_num[0], self.encoder_classes).swapaxes(1, 2)
-        )  # (bs, encoder_classes, N)
-        feature2 = (
-            self.model2(x2).view(-1, self.instance_num[1], self.encoder_classes).swapaxes(1, 2)
-        )
-        feature3 = (
-            self.model3(x3).view(-1, self.instance_num[2], self.encoder_classes).swapaxes(1, 2)
-        )
-        feature1 = self.maxpool1(feature1).squeeze(-1)  # (bs, encoder_classes)
-        feature2 = self.maxpool2(feature2).squeeze(-1)
-        feature3 = self.maxpool3(feature3).squeeze(-1)
-
-        x = torch.cat((feature1, feature2, feature3), dim=1)
-        return self.classifier(x)
-
-
-class LevelROIModel(nn.Module):
-    def __init__(self, base_model, num_classes, in_channels=None, pretrained=True):
-        super().__init__()
-        self.model_sagt2 = timm.create_model(
-            model_name=base_model,
-            pretrained=pretrained,
-            num_classes=128,
-            in_chans=in_channels,
-        )
-        self.model_axi = timm.create_model(
-            model_name=base_model,
-            pretrained=pretrained,
-            num_classes=128,
-            in_chans=in_channels,
-        )
-        self.classifier = nn.Linear(128 + 128 + 5, num_classes)
-
-    def forward(self, x_sagt2, x_axi, level):
-        x_sagt2 = self.model_sagt2(x_sagt2)
-        x_axi = self.model_axi(x_axi)
-        x = self.classifier(torch.cat((x_sagt2, x_axi, level), dim=1))
-        return x
-
 
 class SpinalROIModel(nn.Module):
     def __init__(self, base_model, num_classes, in_channels=None, pretrained=True):
@@ -201,17 +93,10 @@ class SpinalROIModel(nn.Module):
             num_classes=128,
             in_chans=in_channels,
         )
-        # self.model_sagt1 = timm.create_model(
-        #     model_name=base_model,
-        #     pretrained=pretrained,
-        #     num_classes=128,
-        #     in_chans=in_channels,
-        # )
         self.classifier = nn.Linear(128 + 5, num_classes)
 
     def forward(self, x_sagt2, level):
         x_sagt2 = self.model_sagt2(x_sagt2)
-        # x_sagt1 = self.model_sagt1(x_sagt1)
         x = self.classifier(torch.cat((x_sagt2, level), dim=1))
         return x
 
@@ -219,12 +104,6 @@ class SpinalROIModel(nn.Module):
 class ForaminalROIModel(nn.Module):
     def __init__(self, base_model, num_classes, in_channels=None, pretrained=True):
         super().__init__()
-        # self.model_sagt2 = timm.create_model(
-        #     model_name=base_model,
-        #     pretrained=pretrained,
-        #     num_classes=128,
-        #     in_chans=in_channels,
-        # )
         self.model_sagt1 = timm.create_model(
             model_name=base_model,
             pretrained=pretrained,
@@ -234,7 +113,6 @@ class ForaminalROIModel(nn.Module):
         self.classifier = nn.Linear(128 + 5, num_classes)
 
     def forward(self, x_sagt1, level):
-        # x_sagt2 = self.model_sagt2(x_sagt2)
         x_sagt1 = self.model_sagt1(x_sagt1)
         x = self.classifier(torch.cat((x_sagt1, level), dim=1))
         return x
