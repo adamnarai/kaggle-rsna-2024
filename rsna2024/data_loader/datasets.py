@@ -412,9 +412,9 @@ class SpinalROIDataset(Dataset):
             dtype={'study_id': 'str', 'series_id': 'str'},
         )
 
-    def load_coordinates_info(self, root_dir):
+    def load_coordinates_info(self):
         return pd.read_csv(
-            os.path.join(root_dir, 'data', 'processed', 'train_label_coordinates.csv'),
+            os.path.join(self.data_dir, '..', 'processed', 'train_label_coordinates.csv'),
             dtype={'study_id': 'str', 'series_id': 'str'},
         )
 
@@ -735,7 +735,6 @@ class SubarticularROIDataset(ForaminalROIDataset):
         )
 
         if self.transform:
-            # sagt2_roi = self.transform(image=sagt2_roi)['image']
             sagt1_roi = self.transform(image=sagt1_roi)['image']
             axi_roi = self.transform(image=axi_roi)['image']
 

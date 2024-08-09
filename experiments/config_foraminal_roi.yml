@@ -7,7 +7,7 @@ benchmark: False
 # Wandb
 use_wandb: True
 tags:
-  - tiles_axi
+  - tiles_sagt1
   - foraminal_roi
 notes: ''
 
