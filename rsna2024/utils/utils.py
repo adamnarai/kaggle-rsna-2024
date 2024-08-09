@@ -10,21 +10,22 @@ def natural_sort(l):
     return sorted(l, key=alphanum_key)
 
 
-def sagi_coord_to_axi_instance_number(sag_x_norm, sag_y_norm, sag_dir, axi_dir_list):
+def get_series(df_series, study_id, series_description):
+    series_list = df_series[
+        (df_series['study_id'] == study_id)
+        & (df_series['series_description'] == series_description)
+    ]['series_id'].tolist()
+    if len(series_list) == 0:
+        return None
+    return series_list
 
+
+def sagi_coord_to_axi_instance_number(sag_x_norm, sag_y_norm, mid_sag_ds, axi_ds_list):
     # Calculate sagittal world coordinates based on middle slice
-    sag_file_list = natural_sort(os.listdir(sag_dir))
-    mid_sag_ds = pydicom.dcmread(os.path.join(sag_dir, sag_file_list[len(sag_file_list) // 2]))
     sag_affine = dcm_affine(mid_sag_ds)
     sag_coord = np.array([sag_y_norm * mid_sag_ds.Rows, sag_x_norm * mid_sag_ds.Columns, 0, 1])
     sag_world_coord = sag_affine @ sag_coord
 
-    # Get all axi ds
-    axi_ds_list = []
-    for axi_dir in axi_dir_list:
-        axi_file_list = natural_sort(os.listdir(axi_dir))
-        axi_ds_list += [pydicom.dcmread(os.path.join(axi_dir, file)) for file in axi_file_list]
-    
     # Get closest axial slice
     axi_coord_list = []
     for ds in axi_ds_list:
@@ -33,8 +34,9 @@ def sagi_coord_to_axi_instance_number(sag_x_norm, sag_y_norm, sag_dir, axi_dir_l
     axi_slice_idx = np.argmin(
         [sum((axi_coord - sag_world_coord) ** 2) for axi_coord in axi_coord_list]
     )
+    axi_series_id, axi_instance_number = axi_ds_list[axi_slice_idx].filename.split('/')[-2:]
 
-    return int(axi_slice_idx)
+    return axi_series_id, int(axi_instance_number.replace('.dcm', ''))
 
 
 def dcm_affine(ds):

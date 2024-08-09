@@ -1,21 +1,17 @@
 import os
 import random
 from itertools import compress
+import warnings
+import logging
 import pandas as pd
 import numpy as np
 import pydicom
 import cv2
-import warnings
-import logging
-from albumentations.pytorch import ToTensorV2
-import json
 
 import torch
 from torch.utils.data import Dataset
 
-from rsna2024.utils import natural_sort, load_config, sagi_coord_to_axi_instance_number
-from rsna2024 import model as module_model
-import rsna2024.data_loader as module_data
+from rsna2024.utils import natural_sort
 
 
 class Sagt2CoordDataset(Dataset):
@@ -28,29 +24,36 @@ class Sagt2CoordDataset(Dataset):
         resolution,
         heatmap_std,
         phase='train',
+        df_coordinates=None,
         transform=None,
     ):
-        if phase == 'test':
-            self.img_subdir = 'test_images'
-            self.series_filename = 'test_series_descriptions.csv'
-        else:
+        self.phase = phase
+        if self.phase in ['train', 'valid', 'faketest']:
             self.img_subdir = 'train_images'
             self.series_filename = 'train_series_descriptions.csv'
-
-        self.levels = ['l1_l2', 'l2_l3', 'l3_l4', 'l4_l5', 'l5_s1']
-        self.sides = ['left', 'right']
-
+        elif self.phase == 'test':
+            self.img_subdir = 'test_images'
+            self.series_filename = 'test_series_descriptions.csv'
+        if self.phase == 'faketest':
+            self.phase = 'test'
+        
         self.df = df
         self.data_dir = os.path.join(root_dir, data_dir)
         self.df_series = self.load_series_info()
-        self.df_coordinates = self.load_coordinates_info(root_dir).merge(
+        if df_coordinates is None and self.phase != 'test':
+            self.df_coordinates = self.load_coordinates_info().merge(
             self.df_series, how='left', on=['study_id', 'series_id']
         )
-        self.img_dir = os.path.join(self.data_dir, 'train_images')
+        else:
+            self.df_coordinates = df_coordinates
+        self.img_dir = os.path.join(self.data_dir, self.img_subdir)
         self.transform = transform
         self.img_num = img_num
         self.resolution = resolution
         self.heatmap_std = heatmap_std
+
+        self.levels = ['l1_l2', 'l2_l3', 'l3_l4', 'l4_l5', 'l5_s1']
+        self.sides = ['left', 'right']
 
         self.logger = logging.getLogger(__name__)
         self.logger.setLevel(logging.ERROR)
@@ -63,9 +66,9 @@ class Sagt2CoordDataset(Dataset):
             dtype={'study_id': 'str', 'series_id': 'str'},
         )
 
-    def load_coordinates_info(self, root_dir):
+    def load_coordinates_info(self):
         return pd.read_csv(
-            os.path.join(root_dir, 'data', 'processed', 'train_label_coordinates.csv'),
+            os.path.join(self.data_dir, '..', 'processed', 'train_label_coordinates.csv'),
             dtype={'study_id': 'str', 'series_id': 'str'},
         )
 
@@ -137,7 +140,11 @@ class Sagt2CoordDataset(Dataset):
             instance_number = np.nan
         else:
             # get the first instance number for the series
-            instance_number = self.most_frequent(series_coords[series_coords['series_id'] == series_id]['instance_number'].values.tolist())
+            instance_number = self.most_frequent(
+                series_coords[series_coords['series_id'] == series_id][
+                    'instance_number'
+                ].values.tolist()
+            )
 
         if len(series_list) == 0:
             self.logger.warning('%s %s not found', study_id, series_description)
@@ -147,6 +154,21 @@ class Sagt2CoordDataset(Dataset):
             self.logger.warning('%s %s multiple found', study_id, series_description)
 
         return series_id, coords, instance_number
+
+    def get_series(self, study_id, series_description):
+        series_list = self.df_series[
+            (self.df_series['study_id'] == study_id)
+            & (self.df_series['series_description'] == series_description)
+        ]['series_id'].tolist()
+
+        if len(series_list) == 0:
+            self.logger.warning('%s %s not found', study_id, series_description)
+            return None
+
+        if len(series_list) > 1:
+            self.logger.warning('%s %s multiple found', study_id, series_description)
+
+        return series_list
 
     def get_image(
         self,
@@ -208,46 +230,66 @@ class Sagt2CoordDataset(Dataset):
     def __getitem__(self, idx):
         row = self.df.iloc[idx]
 
-        series_id, coords, instance_number = self.get_series_with_coords(
-            row.study_id, 'Sagittal T2/STIR'
-        )
-        heatmaps = self.create_heatmaps(coords * self.resolution)
-        img = self.get_image(row.study_id, series_id, instance_number_type='middle')
+        if self.phase in ['train', 'valid']:
+            series_id, coords, _ = self.get_series_with_coords(row.study_id, 'Sagittal T2/STIR')
+            img = self.get_image(row.study_id, series_id, instance_number_type='middle')
 
-        if self.transform:
-            t = self.transform(image=img, mask=heatmaps)
-            img, heatmaps = t['image'], t['mask']
-        heatmaps = np.transpose(heatmaps, (2, 0, 1))
+            heatmaps = self.create_heatmaps(coords * self.resolution)
+            if self.transform:
+                t = self.transform(image=img, mask=heatmaps)
+                img, heatmaps = t['image'], t['mask']
+            heatmaps = np.transpose(heatmaps, (2, 0, 1))
+            return img, heatmaps
 
-        return img, heatmaps
+        elif self.phase in ['test', 'predict']:
+            series_id = self.get_series(row.study_id, 'Sagittal T2/STIR')
+            if series_id is not None:
+                series_id = series_id[0]  # get the first series_id
+            img = self.get_image(row.study_id, series_id, instance_number_type='middle')
+            if self.transform:
+                img = self.transform(image=img)['image']
+            return img, 0
 
 
 class Sagt1CoordDataset(Sagt2CoordDataset):
     def __getitem__(self, idx):
         row = self.df.iloc[idx]
 
-        series_id, coords, instance_number = self.get_series_with_coords(
-            row.study_id, 'Sagittal T1'
-        )
-        # Average left/right coordinates
-        with warnings.catch_warnings():
-            warnings.simplefilter('ignore', category=RuntimeWarning)
-            coords = np.nanmean(coords.reshape(2, -1, 2, order='F'), axis=0)
-        heatmaps = self.create_heatmaps(coords * self.resolution)
-        img_left = self.get_image(
-            row.study_id, series_id, instance_number_type='relative', instance_number=0.70
-        )
-        img_right = self.get_image(
-            row.study_id, series_id, instance_number_type='relative', instance_number=0.26
-        )
-        img = np.concatenate([img_left, img_right], axis=-1)
+        if self.phase in ['train', 'valid']:
+            series_id, coords, _ = self.get_series_with_coords(row.study_id, 'Sagittal T1')
+            # Average left/right coordinates
+            with warnings.catch_warnings():
+                warnings.simplefilter('ignore', category=RuntimeWarning)
+                coords = np.nanmean(coords.reshape(2, -1, 2, order='F'), axis=0)
+            img_left = self.get_image(
+                row.study_id, series_id, instance_number_type='relative', instance_number=0.70
+            )
+            img_right = self.get_image(
+                row.study_id, series_id, instance_number_type='relative', instance_number=0.26
+            )
+            img = np.concatenate([img_left, img_right], axis=-1)
 
-        if self.transform:
-            t = self.transform(image=img, mask=heatmaps)
-            img, heatmaps = t['image'], t['mask']
-        heatmaps = np.transpose(heatmaps, (2, 0, 1))
+            heatmaps = self.create_heatmaps(coords * self.resolution)
+            if self.transform:
+                t = self.transform(image=img, mask=heatmaps)
+                img, heatmaps = t['image'], t['mask']
+            heatmaps = np.transpose(heatmaps, (2, 0, 1))
+            return img, heatmaps
 
-        return img, heatmaps
+        elif self.phase in ['test', 'predict']:
+            series_id = self.get_series(row.study_id, 'Sagittal T1')
+            if series_id is not None:
+                series_id = series_id[0]  # get the first series_id
+            img_left = self.get_image(
+                row.study_id, series_id, instance_number_type='relative', instance_number=0.70
+            )
+            img_right = self.get_image(
+                row.study_id, series_id, instance_number_type='relative', instance_number=0.26
+            )
+            img = np.concatenate([img_left, img_right], axis=-1)
+            if self.transform:
+                img = self.transform(image=img)['image']
+            return img, 0
 
 
 class AxiCoordDataset(Sagt2CoordDataset):
@@ -276,7 +318,7 @@ class AxiCoordDataset(Sagt2CoordDataset):
         series_id, coords, instance_number = self.get_series_with_coords(
             row.study_id, 'Axial T2', level=row.level
         )
-        heatmaps = self.create_heatmaps(coords * self.resolution)
+
         img = self.get_image(
             row.study_id,
             series_id,
@@ -284,12 +326,20 @@ class AxiCoordDataset(Sagt2CoordDataset):
             instance_number=instance_number,
         )
 
-        if self.transform:
-            t = self.transform(image=img, mask=heatmaps)
-            img, heatmaps = t['image'], t['mask']
-        heatmaps = np.transpose(heatmaps, (2, 0, 1))
+        if self.phase in ['train', 'valid']:
+            heatmaps = self.create_heatmaps(coords * self.resolution)
+            if self.transform:
+                t = self.transform(image=img, mask=heatmaps)
+                img, heatmaps = t['image'], t['mask']
+            heatmaps = np.transpose(heatmaps, (2, 0, 1))
 
-        return img, heatmaps
+            return img, heatmaps
+
+        elif self.phase == 'test':
+            if self.transform:
+                img = self.transform(image=img)['image']
+
+            return img, 0
 
 
 class SpinalROIDataset(Dataset):
@@ -302,18 +352,31 @@ class SpinalROIDataset(Dataset):
         resolution,
         roi_size,
         phase='train',
+        df_coordinates=None,
         coord_model_names={},
         transform=None,
     ):
-        if phase == 'train' or phase == 'valid':
+        self.phase = phase
+        if self.phase in ['train', 'valid', 'faketest']:
             self.img_subdir = 'train_images'
             self.series_filename = 'train_series_descriptions.csv'
-        elif phase == 'test':
+        elif self.phase == 'test':
             self.img_subdir = 'test_images'
             self.series_filename = 'test_series_descriptions.csv'
+        if self.phase == 'faketest':
+            self.phase = 'test'
+        
+        self.df = df
+        self.data_dir = os.path.join(root_dir, data_dir)
+        self.df_series = self.load_series_info()
+        if df_coordinates is None and self.phase != 'test':
+            self.df_coordinates = self.load_coordinates_info().merge(
+            self.df_series, how='left', on=['study_id', 'series_id']
+        )
+        else:
+            self.df_coordinates = df_coordinates
+        self.img_dir = os.path.join(self.data_dir, self.img_subdir)
 
-        self.levels = ['l1_l2', 'l2_l3', 'l3_l4', 'l4_l5', 'l5_s1']
-        self.sides = ['left', 'right']
         self.df_orig = df
         self.df = pd.wide_to_long(
             df,
@@ -329,27 +392,19 @@ class SpinalROIDataset(Dataset):
             sep='_',
             suffix=r'\w+',
         ).reset_index()
-        self.data_dir = os.path.join(root_dir, data_dir)
-        self.df_series = self.load_series_info()
-        if phase == 'train' or phase == 'valid':
-            self.df_coordinates = self.load_coordinates_info(root_dir).merge(
-                self.df_series, how='left', on=['study_id', 'series_id']
-            )
-        else:
-            # TODO: Load test coordinates
-            pass
-        self.img_dir = os.path.join(self.data_dir, self.img_subdir)
         self.transform = transform
         self.img_num = img_num
         self.resolution = resolution
         self.roi_size = roi_size
         self.phase = phase
+        
+        self.levels = ['l1_l2', 'l2_l3', 'l3_l4', 'l4_l5', 'l5_s1']
+        self.sides = ['left', 'right']
 
         self.logger = logging.getLogger(__name__)
         self.logger.setLevel(logging.ERROR)
         self.handler = logging.FileHandler('level_roi_dataset.log')
         self.logger.addHandler(self.handler)
-
 
     def load_series_info(self):
         return pd.read_csv(
@@ -399,9 +454,7 @@ class SpinalROIDataset(Dataset):
         ][['x_norm', 'y_norm', 'instance_number']].values
 
         if coords.shape[0] == 0:
-            self.logger.warning(
-                'SAGT2 %s %s %s no coordinates found', study_id, series_id, level
-            )
+            self.logger.warning('SAGT2 %s %s %s no coordinates found', study_id, series_id, level)
             return (np.nan, np.nan, np.nan)
 
         if coords.shape[0] > 1:
@@ -418,9 +471,9 @@ class SpinalROIDataset(Dataset):
             & (self.df_coordinates['series_id'] == series_id)
             & (self.df_coordinates['level'] == level.replace('_', '/').upper())
         ]
-        coords = df_coordinates_filtered[
-            df_coordinates_filtered['row_id'].str.startswith(side)
-        ][['x_norm', 'y_norm', 'instance_number']].values
+        coords = df_coordinates_filtered[df_coordinates_filtered['row_id'].str.startswith(side)][
+            ['x_norm', 'y_norm', 'instance_number']
+        ].values
 
         if coords.shape[0] == 0:
             self.logger.warning(
@@ -442,18 +495,16 @@ class SpinalROIDataset(Dataset):
             & (self.df_coordinates['series_description'] == 'Axial T2')
             & (self.df_coordinates['level'] == level.replace('_', '/').upper())
         ]
-        coords = df_coordinates_filtered[
-            df_coordinates_filtered['row_id'].str.startswith(side)
-        ][['x_norm', 'y_norm', 'instance_number', 'series_id']].values
+        coords = df_coordinates_filtered[df_coordinates_filtered['row_id'].str.startswith(side)][
+            ['x_norm', 'y_norm', 'instance_number', 'series_id']
+        ].values
 
         if coords.shape[0] == 0:
             self.logger.warning('AXI %s %s %s no coordinates found', study_id, level, side)
             return np.nan, np.nan, np.nan, ''
 
         if coords.shape[0] > 1:
-            self.logger.warning(
-                'AXI %s %s %s multiple coordinates found', study_id, level, side
-            )
+            self.logger.warning('AXI %s %s %s multiple coordinates found', study_id, level, side)
 
         x_norm, y_norm, instance_number, series_id = coords[0]
         return x_norm, y_norm, int(instance_number), str(series_id)
@@ -558,7 +609,7 @@ class SpinalROIDataset(Dataset):
         sagt2_series_id = self.get_series(row.study_id, 'Sagittal T2/STIR')
         if sagt2_series_id is not None:
             sagt2_series_id = sagt2_series_id[0]
-        sagt2_x_norm, sagt2_y_norm, sagt2_instance_number = self.get_sagt2_coord(
+        sagt2_x_norm, sagt2_y_norm, _ = self.get_sagt2_coord(
             row.study_id, sagt2_series_id, row.level
         )
         sagt2_roi = self.get_roi(
@@ -702,15 +753,30 @@ class BaseDataset(Dataset):
         resolution,
         block_position=('middle', 'middle', 'middle'),
         series_mask=(0, 0, 0),
+        df_coordinates=None,
+        phase='train',
         transform=None,
     ):
+        self.phase = phase
+        if self.phase in ['train', 'valid', 'faketest']:
+            self.img_subdir = 'train_images'
+            self.series_filename = 'train_series_descriptions.csv'
+        elif self.phase == 'test':
+            self.img_subdir = 'test_images'
+            self.series_filename = 'test_series_descriptions.csv'
+        if self.phase == 'faketest':
+            self.phase = 'test'
+        
         self.df = df
         self.data_dir = os.path.join(root_dir, data_dir)
         self.df_series = self.load_series_info()
-        self.df_coordinates = self.load_coordinates_info().merge(
+        if df_coordinates is None and self.phase != 'test':
+            self.df_coordinates = self.load_coordinates_info().merge(
             self.df_series, how='left', on=['study_id', 'series_id']
         )
-        self.img_dir = os.path.join(self.data_dir, 'train_images')
+        else:
+            self.df_coordinates = df_coordinates
+        self.img_dir = os.path.join(self.data_dir, self.img_subdir)
         self.out_vars = out_vars
         self.transform = transform
         self.img_num = img_num
@@ -720,41 +786,6 @@ class BaseDataset(Dataset):
 
     def __len__(self):
         return len(self.df)
-
-    def __getitem__(self, idx):
-        row = self.df.iloc[idx]
-        label = self.df[self.out_vars].iloc[idx].values
-        label = np.nan_to_num(label.astype(float), nan=0).astype(np.int64)
-
-        x1, x2, x3 = None, None, None
-        if self.series_mask[0]:
-            x1 = self.get_series(
-                row.study_id,
-                'Sagittal T1',
-                img_num=self.img_num[0],
-                block_position=self.block_position[0],
-            )
-        if self.series_mask[1]:
-            x2 = self.get_series(
-                row.study_id,
-                'Sagittal T2/STIR',
-                img_num=self.img_num[1],
-                block_position=self.block_position[1],
-            )
-        if self.series_mask[2]:
-            x3 = self.get_series(
-                row.study_id,
-                'Axial T2',
-                img_num=self.img_num[2],
-                block_position=self.block_position[2],
-            )
-
-        x = np.concatenate(list(compress([x1, x2, x3], self.series_mask)), axis=2)
-
-        if self.transform:
-            x = self.transform(image=x)['image']
-
-        return x, label
 
     def load_series_info(self):
         return pd.read_csv(
@@ -828,12 +859,48 @@ class BaseDataset(Dataset):
 
         return x
 
+    def __getitem__(self, idx):
+        row = self.df.iloc[idx]
+
+        x1, x2, x3 = None, None, None
+        if self.series_mask[0]:
+            x1 = self.get_series(
+                row.study_id,
+                'Sagittal T1',
+                img_num=self.img_num[0],
+                block_position=self.block_position[0],
+            )
+        if self.series_mask[1]:
+            x2 = self.get_series(
+                row.study_id,
+                'Sagittal T2/STIR',
+                img_num=self.img_num[1],
+                block_position=self.block_position[1],
+            )
+        if self.series_mask[2]:
+            x3 = self.get_series(
+                row.study_id,
+                'Axial T2',
+                img_num=self.img_num[2],
+                block_position=self.block_position[2],
+            )
+
+        x = np.concatenate(list(compress([x1, x2, x3], self.series_mask)), axis=2)
+
+        if self.transform:
+            x = self.transform(image=x)['image']
+            
+        if self.phase in ['train', 'valid']:
+            label = self.df[self.out_vars].iloc[idx].values
+            label = np.nan_to_num(label.astype(float), nan=0).astype(np.int64)
+            return x, label
+
+        return x
+
 
 class SplitDataset(BaseDataset):
     def __getitem__(self, idx):
         row = self.df.iloc[idx]
-        label = self.df[self.out_vars].iloc[idx].values
-        label = np.nan_to_num(label.astype(float), nan=0).astype(np.int64)
 
         # Sagittal T1
         x1 = self.get_series(
@@ -856,5 +923,10 @@ class SplitDataset(BaseDataset):
             x1 = self.transform(image=x1)['image']
             x2 = self.transform(image=x2)['image']
             x3 = self.transform(image=x3)['image']
-
-        return x1, x2, x3, label
+            
+        if self.phase in ['train', 'valid']:
+            label = self.df[self.out_vars].iloc[idx].values
+            label = np.nan_to_num(label.astype(float), nan=0).astype(np.int64)
+            return x1, x2, x3, label
+        
+        return x1, x2, x3

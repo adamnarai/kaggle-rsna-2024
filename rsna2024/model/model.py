@@ -54,8 +54,6 @@ class SplitModel(nn.Module):
         return self.classifier(x)
 
 
-
-
 class CoordModel(nn.Module):
     def __init__(
         self,
@@ -81,7 +79,6 @@ class CoordModel(nn.Module):
 
     def forward(self, x):
         return self.unet(x)
-
 
 
 class SpinalROIModel(nn.Module):
