@@ -97,7 +97,7 @@ class RunnerBase:
         
     def get_dataloader(self, df, phase, df_coordinates=None):
         transform = self.get_instance(module_aug, f'{phase}_transform', self.cfg).get_transform()
-        dataset = self.get_instance(module_data, 'dataset', self.cfg, df, root_dir=self.root_dir, transform=transform, df_coordinates=None)
+        dataset = self.get_instance(module_data, 'dataset', self.cfg, df, root_dir=self.root_dir, transform=transform, df_coordinates=df_coordinates)
         return self.get_instance(module_data, 'data_loader', self.cfg, dataset, phase)
 
     def train_model(self, df_train, df_valid, state_filename, validate=True):

@@ -34,7 +34,7 @@ df_series = pd.read_csv(
 )
 device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 
-levels = ['L1/L2', 'L2/L3', 'L3/L4', 'L4/L5', 'L5/S1']
+levels = ['l1_l2', 'l2_l3', 'l3_l4', 'l4_l5', 'l5_s1']
 sides = ['left', 'right']
 
 
@@ -102,11 +102,11 @@ for i in tqdm(range(len(kp_sagt2_data))):
                 'study_id': study_id,
                 'series_id': series_id,
                 'condition': 'Spinal Canal Stenosis',
-                'level': level,
+                'level': level.replace('_', '/').upper(),
                 'x_norm': x_norm,
                 'y_norm': y_norm,
                 'instance_number': np.nan,
-                'row_id': 'spinal_canal_stenosis_' + level.replace('/', '_').lower(),
+                'row_id': 'spinal_canal_stenosis_' + level,
             }
         )
 
@@ -123,11 +123,11 @@ for i in tqdm(range(len(kp_sagt2_data))):
                     'study_id': kp_sagt2_data.iloc[i]['study_id'],
                     'series_id': axi_series_id,
                     'condition': side.capitalize() + ' Subarticular Stenosis',
-                    'level': level,
+                    'level': level.replace('_', '/').upper(),
                     'x_norm': np.nan,
                     'y_norm': np.nan,
                     'instance_number': axi_instance_number,
-                    'row_id': side + '_subarticular_stenosis_' + level.replace('/', '_').lower(),
+                    'row_id': side + '_subarticular_stenosis_' + level,
                 }
             )
 coord_df = pd.concat((pd.DataFrame(coord_df_sagt2_list), pd.DataFrame(coord_df_axi_list)))
@@ -148,7 +148,7 @@ kp_sagt1_data = (
 
 coord_df_list = []
 for i in tqdm(range(len(kp_sagt1_data))):
-    for side_idx, level in enumerate(levels):
+    for level_idx, level in enumerate(levels):
         for side in sides:
             # Get coordinates
             x_norm, y_norm = get_coord_from_heatmap_pred(kp_sagt1_preds, i, level_idx)
@@ -157,13 +157,13 @@ for i in tqdm(range(len(kp_sagt1_data))):
                     'study_id': kp_sagt1_data.iloc[i]['study_id'],
                     'series_id': kp_sagt1_data.iloc[i]['series_id'],
                     'condition': side.capitalize() + ' Neural Foraminal Narrowing',
-                    'level': level,
+                    'level': level.replace('_', '/').upper(),
                     'x_norm': x_norm,
                     'y_norm': y_norm,
                     'instance_number': np.nan,
                     'row_id': side
                     + '_neural_foraminal_narrowing_'
-                    + level.replace('/', '_').lower(),
+                    + level,
                 }
             )
 coord_df = pd.concat((coord_df, pd.DataFrame(coord_df_list)))
@@ -180,7 +180,6 @@ kp_axi_preds, kp_axi_ys, kp_axi_data = Runner(
 for i in tqdm(range(len(kp_axi_data))):
     study_id = kp_axi_data.iloc[i]['study_id']
     for level in levels:
-        level = level.replace('/', '_').lower()
         for side_idx, side in enumerate(sides):
             # Get series_id from coord_df
             series_id = coord_df.loc[

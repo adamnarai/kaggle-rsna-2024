@@ -14,7 +14,7 @@ from torch.utils.data import Dataset
 from rsna2024.utils import natural_sort
 
 
-class Sagt2CoordDataset(Dataset):
+class CoordDataset(Dataset):
     def __init__(
         self,
         df,
@@ -25,6 +25,7 @@ class Sagt2CoordDataset(Dataset):
         heatmap_std,
         phase='train',
         df_coordinates=None,
+        cleaning_rule=None,
         transform=None,
     ):
         self.phase = phase
@@ -41,16 +42,19 @@ class Sagt2CoordDataset(Dataset):
         self.data_dir = os.path.join(root_dir, data_dir)
         self.df_series = self.load_series_info()
         if df_coordinates is None and self.phase != 'test':
-            self.df_coordinates = self.load_coordinates_info().merge(
-            self.df_series, how='left', on=['study_id', 'series_id']
-        )
+            self.df_coordinates = self.load_coordinates_info()
         else:
             self.df_coordinates = df_coordinates
+        if self.df_coordinates is not None:
+            self.df_coordinates = self.df_coordinates.merge(
+            self.df_series, how='left', on=['study_id', 'series_id']
+        )
         self.img_dir = os.path.join(self.data_dir, self.img_subdir)
         self.transform = transform
         self.img_num = img_num
         self.resolution = resolution
         self.heatmap_std = heatmap_std
+        self.cleaning_rule = cleaning_rule
 
         self.levels = ['l1_l2', 'l2_l3', 'l3_l4', 'l4_l5', 'l5_s1']
         self.sides = ['left', 'right']
@@ -71,7 +75,7 @@ class Sagt2CoordDataset(Dataset):
             os.path.join(self.data_dir, '..', 'processed', 'train_label_coordinates.csv'),
             dtype={'study_id': 'str', 'series_id': 'str'},
         )
-
+        
     def __len__(self):
         return len(self.df)
 
@@ -227,6 +231,21 @@ class Sagt2CoordDataset(Dataset):
 
         return x
 
+class Sagt2CoordDataset(CoordDataset):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+        # Clean data
+        if self.phase == 'train':
+            if self.cleaning_rule == 'keep_only_complete':
+                coord_counts = (
+                    self.df_coordinates[self.df_coordinates['condition'] == 'Spinal Canal Stenosis']
+                    .groupby('study_id')
+                    .count()['series_id']
+                )
+                good_study_ids = coord_counts[coord_counts == 5].index.astype(str).tolist()
+                self.df = self.df[self.df['study_id'].isin(good_study_ids)]
+
     def __getitem__(self, idx):
         row = self.df.iloc[idx]
 
@@ -251,7 +270,7 @@ class Sagt2CoordDataset(Dataset):
             return img, 0
 
 
-class Sagt1CoordDataset(Sagt2CoordDataset):
+class Sagt1CoordDataset(CoordDataset):
     def __getitem__(self, idx):
         row = self.df.iloc[idx]
 
@@ -292,7 +311,7 @@ class Sagt1CoordDataset(Sagt2CoordDataset):
             return img, 0
 
 
-class AxiCoordDataset(Sagt2CoordDataset):
+class AxiCoordDataset(CoordDataset):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
@@ -370,11 +389,13 @@ class SpinalROIDataset(Dataset):
         self.data_dir = os.path.join(root_dir, data_dir)
         self.df_series = self.load_series_info()
         if df_coordinates is None and self.phase != 'test':
-            self.df_coordinates = self.load_coordinates_info().merge(
-            self.df_series, how='left', on=['study_id', 'series_id']
-        )
+            self.df_coordinates = self.load_coordinates_info()
         else:
             self.df_coordinates = df_coordinates
+        if self.df_coordinates is not None:
+            self.df_coordinates = self.df_coordinates.merge(
+            self.df_series, how='left', on=['study_id', 'series_id']
+        )
         self.img_dir = os.path.join(self.data_dir, self.img_subdir)
 
         self.df_orig = df
@@ -396,7 +417,6 @@ class SpinalROIDataset(Dataset):
         self.img_num = img_num
         self.resolution = resolution
         self.roi_size = roi_size
-        self.phase = phase
         
         self.levels = ['l1_l2', 'l2_l3', 'l3_l4', 'l4_l5', 'l5_s1']
         self.sides = ['left', 'right']
@@ -463,7 +483,9 @@ class SpinalROIDataset(Dataset):
             )
 
         x_norm, y_norm, instance_number = coords[0]
-        return x_norm, y_norm, int(instance_number)
+        if not np.isnan(instance_number):
+            instance_number = int(instance_number)
+        return x_norm, y_norm, instance_number
 
     def get_sagt1_coord(self, study_id, series_id, level, side):
         df_coordinates_filtered = self.df_coordinates[
@@ -487,7 +509,9 @@ class SpinalROIDataset(Dataset):
             )
 
         x_norm, y_norm, instance_number = coords[0]
-        return x_norm, y_norm, int(instance_number)
+        if not np.isnan(instance_number):
+            instance_number = int(instance_number)
+        return x_norm, y_norm, instance_number
 
     def get_axi_coord(self, study_id, level, side):
         df_coordinates_filtered = self.df_coordinates[
@@ -507,21 +531,24 @@ class SpinalROIDataset(Dataset):
             self.logger.warning('AXI %s %s %s multiple coordinates found', study_id, level, side)
 
         x_norm, y_norm, instance_number, series_id = coords[0]
-        return x_norm, y_norm, int(instance_number), str(series_id)
+        if not np.isnan(instance_number):
+            instance_number = int(instance_number)
+        return x_norm, y_norm, instance_number, str(series_id)
 
-    def get_labels(self, idx, label_name, level_name, side_name=None):
+    def get_label(self, idx, label_name):
         label = self.df[label_name].iloc[idx]
         label = np.nan_to_num(float(label), nan=0).astype(np.int64)
-
+        return label
+    
+    def get_level_onehot(self, level_name):
         level = np.zeros(len(self.levels), dtype=np.float32)
         level[self.levels.index(level_name)] = 1.0
-
-        if side_name is None:
-            return label, level
-        side = np.zeros(2, dtype=np.float32)
+        return level
+    
+    def get_side_onehot(self, side_name):
+        side = np.zeros(len(self.sides), dtype=np.float32)
         side[self.sides.index(side_name)] = 1.0
-
-        return label, level, side
+        return side
 
     def get_roi(
         self,
@@ -603,9 +630,9 @@ class SpinalROIDataset(Dataset):
 
     def __getitem__(self, idx):
         row = self.df.iloc[idx]
-        label, level = self.get_labels(idx, 'spinal_canal_stenosis', row.level)
 
         # Sagittal T2/STIR central ROI
+        # TODO: get series id based on coord_df!
         sagt2_series_id = self.get_series(row.study_id, 'Sagittal T2/STIR')
         if sagt2_series_id is not None:
             sagt2_series_id = sagt2_series_id[0]
@@ -625,8 +652,13 @@ class SpinalROIDataset(Dataset):
 
         if self.transform:
             sagt2_roi = self.transform(image=sagt2_roi)['image']
-
-        return sagt2_roi, level, label
+            
+        level = self.get_level_onehot(row.level)
+        if self.phase in ['train', 'valid']:
+            label = self.get_label(idx, 'spinal_canal_stenosis')
+            return sagt2_roi, level, label
+        elif self.phase == 'test':
+            return sagt2_roi, level, 0
 
 
 class ForaminalROIDataset(SpinalROIDataset):
@@ -653,12 +685,11 @@ class ForaminalROIDataset(SpinalROIDataset):
 
     def __getitem__(self, idx):
         row = self.df.iloc[idx]
-        label, level, side = self.get_labels(idx, 'neural_foraminal_narrowing', row.level, row.side)
 
         # Sagittal T1 central ROI
         sagt1_series_id = self.get_series(row.study_id, 'Sagittal T1')
         sagt1_series_id = sagt1_series_id[0] if sagt1_series_id is not None else None
-        sagt1_x_norm, sagt1_y_norm, sagt1_instance_number = self.get_sagt1_coord(
+        sagt1_x_norm, sagt1_y_norm, _ = self.get_sagt1_coord(
             row.study_id, sagt1_series_id, row.level, row.side
         )
         if row.side == 'left':
@@ -681,64 +712,87 @@ class ForaminalROIDataset(SpinalROIDataset):
         if self.transform:
             sagt1_roi = self.transform(image=sagt1_roi)['image']
 
-        return sagt1_roi, level, label
+        level = self.get_level_onehot(row.level)
+        if self.phase in ['train', 'valid']:
+            label = self.get_label(idx, 'neural_foraminal_narrowing')
+            return sagt1_roi, level, label
+        elif self.phase == 'test':
+            return sagt1_roi, level, 0
 
 
 class SubarticularROIDataset(ForaminalROIDataset):
     def __getitem__(self, idx):
         row = self.df.iloc[idx]
-        label, level, side = self.get_labels(idx, 'subarticular_stenosis', row.level, row.side)
 
-        # Sagittal T1 central ROI
-        sagt1_series_id = self.get_series(row.study_id, 'Sagittal T1')
-        sagt1_series_id = sagt1_series_id[0] if sagt1_series_id is not None else None
-        sagt1_x_norm, sagt1_y_norm, sagt1_instance_number = self.get_sagt1_coord(
-            row.study_id, sagt1_series_id, row.level, row.side
+        # Sagittal T2/STIR central ROI
+        sagt2_series_id = self.get_series(row.study_id, 'Sagittal T2/STIR')
+        if sagt2_series_id is not None:
+            sagt2_series_id = sagt2_series_id[0]
+        sagt2_x_norm, sagt2_y_norm, _ = self.get_sagt2_coord(
+            row.study_id, sagt2_series_id, row.level
         )
-        if row.side == 'left':
-            instance_number = 0.70
-        elif row.side == 'right':
-            instance_number = 0.26
-
-        sagt1_roi = self.get_roi(
+        sagt2_roi = self.get_roi(
             study_id=row.study_id,
-            series_id=sagt1_series_id,
+            series_id=sagt2_series_id,
             img_num=self.img_num,
             resolution=self.resolution,
             roi_size=self.roi_size,
-            x_norm=sagt1_x_norm,
-            y_norm=sagt1_y_norm,
-            instance_number_type='relative',
-            instance_number=instance_number,
+            x_norm=sagt2_x_norm,
+            y_norm=sagt2_y_norm,
+            instance_number_type='middle',
         )
+        
+        # # Sagittal T1 central ROI
+        # sagt1_series_id = self.get_series(row.study_id, 'Sagittal T1')
+        # sagt1_series_id = sagt1_series_id[0] if sagt1_series_id is not None else None
+        # sagt1_x_norm, sagt1_y_norm, _ = self.get_sagt1_coord(
+        #     row.study_id, sagt1_series_id, row.level, row.side
+        # )
+        # if row.side == 'left':
+        #     instance_number = 0.70
+        # elif row.side == 'right':
+        #     instance_number = 0.26
 
-        # Axial T2 central ROI
-        axi_x_norm, axi_y_norm, axi_instance_number, axi_series_id = self.get_axi_coord(
-            row.study_id, row.level, row.side
-        )
+        # sagt1_roi = self.get_roi(
+        #     study_id=row.study_id,
+        #     series_id=sagt1_series_id,
+        #     img_num=self.img_num,
+        #     resolution=self.resolution,
+        #     roi_size=self.roi_size,
+        #     x_norm=sagt1_x_norm,
+        #     y_norm=sagt1_y_norm,
+        #     instance_number_type='relative',
+        #     instance_number=instance_number,
+        # )
 
-        if self.phase == 'train':
-            instance_number_type = 'filename'
-        else:
-            instance_number_type = 'index'
+        # # Axial T2 central ROI
+        # axi_x_norm, axi_y_norm, axi_instance_number, axi_series_id = self.get_axi_coord(
+        #     row.study_id, row.level, row.side
+        # )
 
-        axi_roi = self.get_roi(
-            study_id=row.study_id,
-            series_id=axi_series_id,
-            img_num=self.img_num,
-            resolution=self.resolution,
-            roi_size=self.roi_size,
-            x_norm=axi_x_norm,
-            y_norm=axi_y_norm,
-            instance_number_type=instance_number_type,
-            instance_number=axi_instance_number,
-        )
+        # axi_roi = self.get_roi(
+        #     study_id=row.study_id,
+        #     series_id=axi_series_id,
+        #     img_num=self.img_num,
+        #     resolution=self.resolution,
+        #     roi_size=self.roi_size,
+        #     x_norm=axi_x_norm,
+        #     y_norm=axi_y_norm,
+        #     instance_number_type='filename',
+        #     instance_number=axi_instance_number,
+        # )
 
         if self.transform:
-            sagt1_roi = self.transform(image=sagt1_roi)['image']
-            axi_roi = self.transform(image=axi_roi)['image']
+            sagt2_roi = self.transform(image=sagt2_roi)['image']
+            # sagt1_roi = self.transform(image=sagt1_roi)['image']
+            # axi_roi = self.transform(image=axi_roi)['image']
 
-        return axi_roi, sagt1_roi, level, label
+        level = self.get_level_onehot(row.level)
+        if self.phase in ['train', 'valid']:
+            label = self.get_label(idx, 'subarticular_stenosis')
+            return sagt2_roi, level, label
+        elif self.phase == 'test':
+            return sagt2_roi, level, 0
 
 
 class BaseDataset(Dataset):
@@ -770,11 +824,13 @@ class BaseDataset(Dataset):
         self.data_dir = os.path.join(root_dir, data_dir)
         self.df_series = self.load_series_info()
         if df_coordinates is None and self.phase != 'test':
-            self.df_coordinates = self.load_coordinates_info().merge(
-            self.df_series, how='left', on=['study_id', 'series_id']
-        )
+            self.df_coordinates = self.load_coordinates_info()
         else:
             self.df_coordinates = df_coordinates
+        if self.df_coordinates is not None:
+            self.df_coordinates = self.df_coordinates.merge(
+            self.df_series, how='left', on=['study_id', 'series_id']
+        )
         self.img_dir = os.path.join(self.data_dir, self.img_subdir)
         self.out_vars = out_vars
         self.transform = transform
@@ -928,4 +984,4 @@ class SplitDataset(BaseDataset):
             label = np.nan_to_num(label.astype(float), nan=0).astype(np.int64)
             return x1, x2, x3, label
         
-        return x1, x2, x3
+        return x1, x2, x3, 0
