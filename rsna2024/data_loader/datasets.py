@@ -29,7 +29,7 @@ class CoordDataset(Dataset):
         transform=None,
     ):
         self.phase = phase
-        if self.phase in ['train', 'valid', 'faketest']:
+        if self.phase in ['train', 'valid', 'predict', 'faketest']:
             self.img_subdir = 'train_images'
             self.series_filename = 'train_series_descriptions.csv'
         elif self.phase == 'test':
@@ -230,16 +230,19 @@ class CoordDataset(Dataset):
             x = (x - x.mean()) / x.std()
 
         return x
+    
+    def __getitem__(self, idx):
+        raise NotImplementedError('Please implement this method in a subclass')
 
 class Sagt2CoordDataset(CoordDataset):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
         # Clean data
-        if self.phase == 'train':
+        if self.phase in ['train', 'valid']:
             if self.cleaning_rule == 'keep_only_complete':
                 coord_counts = (
-                    self.df_coordinates[self.df_coordinates['condition'] == 'Spinal Canal Stenosis']
+                    self.df_coordinates[self.df_coordinates['row_id'].str.contains('spinal_canal_stenosis')]
                     .groupby('study_id')
                     .count()['series_id']
                 )
@@ -249,7 +252,7 @@ class Sagt2CoordDataset(CoordDataset):
     def __getitem__(self, idx):
         row = self.df.iloc[idx]
 
-        if self.phase in ['train', 'valid']:
+        if self.phase in ['train', 'valid', 'predict']:
             series_id, coords, _ = self.get_series_with_coords(row.study_id, 'Sagittal T2/STIR')
             img = self.get_image(row.study_id, series_id, instance_number_type='middle')
 
@@ -260,7 +263,7 @@ class Sagt2CoordDataset(CoordDataset):
             heatmaps = np.transpose(heatmaps, (2, 0, 1))
             return img, heatmaps
 
-        elif self.phase in ['test', 'predict']:
+        elif self.phase in ['test']:
             series_id = self.get_series(row.study_id, 'Sagittal T2/STIR')
             if series_id is not None:
                 series_id = series_id[0]  # get the first series_id
@@ -271,10 +274,24 @@ class Sagt2CoordDataset(CoordDataset):
 
 
 class Sagt1CoordDataset(CoordDataset):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+        # Clean data
+        if self.phase in ['train', 'valid']:
+            if self.cleaning_rule == 'keep_only_complete':
+                coord_counts = (
+                    self.df_coordinates[self.df_coordinates['row_id'].str.contains('neural_foraminal_narrowing')]
+                    .groupby('study_id')
+                    .count()['series_id']
+                )
+                good_study_ids = coord_counts[coord_counts == 10].index.astype(str).tolist()
+                self.df = self.df[self.df['study_id'].isin(good_study_ids)]
+            
     def __getitem__(self, idx):
         row = self.df.iloc[idx]
 
-        if self.phase in ['train', 'valid']:
+        if self.phase in ['train', 'valid', 'predict']:
             series_id, coords, _ = self.get_series_with_coords(row.study_id, 'Sagittal T1')
             # Average left/right coordinates
             with warnings.catch_warnings():
@@ -295,7 +312,7 @@ class Sagt1CoordDataset(CoordDataset):
             heatmaps = np.transpose(heatmaps, (2, 0, 1))
             return img, heatmaps
 
-        elif self.phase in ['test', 'predict']:
+        elif self.phase in ['test']:
             series_id = self.get_series(row.study_id, 'Sagittal T1')
             if series_id is not None:
                 series_id = series_id[0]  # get the first series_id
@@ -330,6 +347,17 @@ class AxiCoordDataset(CoordDataset):
             sep='_',
             suffix=r'\w+',
         ).reset_index()
+        
+        # Clean data
+        if self.phase in ['train', 'valid']:
+            if self.cleaning_rule == 'keep_only_complete':
+                coord_counts = (
+                    self.df_coordinates[self.df_coordinates['row_id'].str.contains('subarticular_stenosis')]
+                    .groupby('study_id')
+                    .count()['series_id']
+                )
+                good_study_ids = coord_counts[coord_counts == 10].index.astype(str).tolist()
+                self.df = self.df[self.df['study_id'].isin(good_study_ids)]
 
     def __getitem__(self, idx):
         row = self.df.iloc[idx]
@@ -345,7 +373,7 @@ class AxiCoordDataset(CoordDataset):
             instance_number=instance_number,
         )
 
-        if self.phase in ['train', 'valid']:
+        if self.phase in ['train', 'valid', 'predict']:
             heatmaps = self.create_heatmaps(coords * self.resolution)
             if self.transform:
                 t = self.transform(image=img, mask=heatmaps)
@@ -354,14 +382,14 @@ class AxiCoordDataset(CoordDataset):
 
             return img, heatmaps
 
-        elif self.phase == 'test':
+        elif self.phase in ['test']:
             if self.transform:
                 img = self.transform(image=img)['image']
 
             return img, 0
 
 
-class SpinalROIDataset(Dataset):
+class ROIDataset(Dataset):
     def __init__(
         self,
         df,
@@ -372,11 +400,12 @@ class SpinalROIDataset(Dataset):
         roi_size,
         phase='train',
         df_coordinates=None,
-        coord_model_names={},
+        cleaning_rule=None,
+        coord_model_names={}, # TODO: future remove
         transform=None,
     ):
         self.phase = phase
-        if self.phase in ['train', 'valid', 'faketest']:
+        if self.phase in ['train', 'valid', 'predict','faketest']:
             self.img_subdir = 'train_images'
             self.series_filename = 'train_series_descriptions.csv'
         elif self.phase == 'test':
@@ -417,6 +446,7 @@ class SpinalROIDataset(Dataset):
         self.img_num = img_num
         self.resolution = resolution
         self.roi_size = roi_size
+        self.cleaning_rule = cleaning_rule
         
         self.levels = ['l1_l2', 'l2_l3', 'l3_l4', 'l4_l5', 'l5_s1']
         self.sides = ['left', 'right']
@@ -627,6 +657,25 @@ class SpinalROIDataset(Dataset):
             x = (x - x.mean()) / x.std()
 
         return x
+    
+    def __getitem__(self, idx):
+        raise NotImplementedError('Please implement this method in a subclass')
+
+
+class SpinalROIDataset(ROIDataset):    
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+        # # Clean data
+        # if self.phase in ['train', 'valid']:
+        #     if self.cleaning_rule == 'keep_only_complete':
+        #         coord_counts = (
+        #             self.df_coordinates[self.df_coordinates['row_id'].str.contains('spinal_canal_stenosis')]
+        #             .groupby('study_id')
+        #             .count()['series_id']
+        #         )
+        #         good_study_ids = coord_counts[coord_counts == 5].index.astype(str).tolist()
+        #         self.df = self.df[self.df['study_id'].isin(good_study_ids)]
 
     def __getitem__(self, idx):
         row = self.df.iloc[idx]
@@ -652,16 +701,16 @@ class SpinalROIDataset(Dataset):
 
         if self.transform:
             sagt2_roi = self.transform(image=sagt2_roi)['image']
-            
+
         level = self.get_level_onehot(row.level)
-        if self.phase in ['train', 'valid']:
+        if self.phase in ['train', 'valid', 'predict']:
             label = self.get_label(idx, 'spinal_canal_stenosis')
             return sagt2_roi, level, label
-        elif self.phase == 'test':
+        elif self.phase in ['test']:
             return sagt2_roi, level, 0
 
 
-class ForaminalROIDataset(SpinalROIDataset):
+class ForaminalROIDataset(ROIDataset):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
@@ -713,11 +762,12 @@ class ForaminalROIDataset(SpinalROIDataset):
             sagt1_roi = self.transform(image=sagt1_roi)['image']
 
         level = self.get_level_onehot(row.level)
-        if self.phase in ['train', 'valid']:
+        side = self.get_side_onehot(row.side)
+        if self.phase in ['train', 'valid', 'predict']:
             label = self.get_label(idx, 'neural_foraminal_narrowing')
-            return sagt1_roi, level, label
-        elif self.phase == 'test':
-            return sagt1_roi, level, 0
+            return sagt1_roi, level, side, label
+        elif self.phase in ['test']:
+            return sagt1_roi, level, side, 0
 
 
 class SubarticularROIDataset(ForaminalROIDataset):
@@ -788,11 +838,12 @@ class SubarticularROIDataset(ForaminalROIDataset):
             # axi_roi = self.transform(image=axi_roi)['image']
 
         level = self.get_level_onehot(row.level)
-        if self.phase in ['train', 'valid']:
+        side = self.get_side_onehot(row.side)
+        if self.phase in ['train', 'valid', 'predict']:
             label = self.get_label(idx, 'subarticular_stenosis')
-            return sagt2_roi, level, label
+            return sagt2_roi, level, side, label
         elif self.phase == 'test':
-            return sagt2_roi, level, 0
+            return sagt2_roi, level, side, 0
 
 
 class BaseDataset(Dataset):
@@ -811,7 +862,7 @@ class BaseDataset(Dataset):
         transform=None,
     ):
         self.phase = phase
-        if self.phase in ['train', 'valid', 'faketest']:
+        if self.phase in ['train', 'valid', 'predict', 'faketest']:
             self.img_subdir = 'train_images'
             self.series_filename = 'train_series_descriptions.csv'
         elif self.phase == 'test':
@@ -945,7 +996,7 @@ class BaseDataset(Dataset):
         if self.transform:
             x = self.transform(image=x)['image']
             
-        if self.phase in ['train', 'valid']:
+        if self.phase in ['train', 'valid', 'predict']:
             label = self.df[self.out_vars].iloc[idx].values
             label = np.nan_to_num(label.astype(float), nan=0).astype(np.int64)
             return x, label
@@ -979,9 +1030,9 @@ class SplitDataset(BaseDataset):
             x2 = self.transform(image=x2)['image']
             x3 = self.transform(image=x3)['image']
             
-        if self.phase in ['train', 'valid']:
+        if self.phase in ['train', 'valid', 'predict']:
             label = self.df[self.out_vars].iloc[idx].values
             label = np.nan_to_num(label.astype(float), nan=0).astype(np.int64)
             return x1, x2, x3, label
-        
-        return x1, x2, x3, 0
+        elif self.phase in ['test']:
+            return x1, x2, x3, 0

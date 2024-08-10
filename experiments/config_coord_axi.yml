@@ -30,6 +30,7 @@ dataset:
     heatmap_std: 10
     resolution: 512
     data_dir: data/raw
+    cleaning_rule: 'none'
 
 data_loader:
   type: BaseDataLoader

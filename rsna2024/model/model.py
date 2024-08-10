@@ -109,7 +109,7 @@ class ForaminalROIModel(nn.Module):
         )
         self.classifier = nn.Linear(128 + 5, num_classes)
 
-    def forward(self, x_sagt1, level):
+    def forward(self, x_sagt1, level, side):
         x_sagt1 = self.model_sagt1(x_sagt1)
         x = self.classifier(torch.cat((x_sagt1, level), dim=1))
         return x
@@ -124,16 +124,7 @@ class SubarticularROIModel(nn.Module):
             num_classes=num_classes,
             in_chans=in_channels,
         )
-        # self.model_axi = timm.create_model(
-        #     model_name=base_model,
-        #     pretrained=pretrained,
-        #     num_classes=128,
-        #     in_chans=in_channels,
-        # )
-        # self.classifier = nn.Linear(128, num_classes)
 
-    def forward(self, x_sagt2, level):
+    def forward(self, x_sagt2, level, side):
         x_sagt2 = self.model_sagt2(x_sagt2)
-        # x_axi = self.model_axi(x_axi)
-        # x = self.classifier(torch.cat((x_sagt2), dim=1))
         return x_sagt2

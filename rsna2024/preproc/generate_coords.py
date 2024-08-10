@@ -21,9 +21,12 @@ from rsna2024.runner import Runner
 from rsna2024.utils import natural_sort, sagi_coord_to_axi_instance_number, get_series
 
 # Params
-sagt2_model_name = 'glad-moon-593'
-sagt1_model_name = 'skilled-totem-601'
-axi_model_name = 'scarlet-feather-603'
+sagt2_model_name = 'glad-moon-593'  #'glad-moon-593'
+sagt1_model_name = 'skilled-totem-601'  #'different-cherry-611' #'skilled-totem-601'
+axi_model_name = 'scarlet-feather-603'  #'silvery-waterfall-612' #'scarlet-feather-603'
+out_filename = 'train_label_coordinates_predicted_{}_{}_{}.csv'.format(
+    sagt2_model_name.split('-')[-1], sagt1_model_name.split('-')[-1], axi_model_name.split('-')[-1]
+)
 
 root_dir = '/media/latlab/MR/projects/kaggle-rsna-2024'
 data_dir = os.path.join(root_dir, 'data', 'raw')
@@ -62,8 +65,11 @@ def get_sagi2axi_data(study_id, series_id):
         return None, None
 
 
-def get_coord_from_heatmap_pred(pred, i, idx):
-    predi = pred[i, idx, ...].squeeze()
+def get_coord_from_heatmap_pred(pred, i, idx, idx2=None):
+    if idx2 is not None:
+        predi = pred[i, idx, idx2, ...].squeeze()
+    else:
+        predi = pred[i, idx, ...].squeeze()
     y_coord, x_coord = np.unravel_index(predi.argmax(), predi.shape)
     x_norm = x_coord / predi.shape[1]
     y_norm = y_coord / predi.shape[0]
@@ -161,9 +167,7 @@ for i in tqdm(range(len(kp_sagt1_data))):
                     'x_norm': x_norm,
                     'y_norm': y_norm,
                     'instance_number': np.nan,
-                    'row_id': side
-                    + '_neural_foraminal_narrowing_'
-                    + level,
+                    'row_id': side + '_neural_foraminal_narrowing_' + level,
                 }
             )
 coord_df = pd.concat((coord_df, pd.DataFrame(coord_df_list)))
@@ -177,9 +181,15 @@ kp_axi_preds, kp_axi_ys, kp_axi_data = Runner(
     cfg, model_name='rsna-2024-' + axi_model_name
 ).predict(df_coordinates=coord_df)
 
+kp_axi_preds = (
+    kp_axi_preds.reshape(5, 5, -1, *kp_axi_preds.shape[1:4])
+    .swapaxes(1, 2)
+    .reshape(-1, 5, *kp_axi_preds.shape[1:4])
+)
+
 for i in tqdm(range(len(kp_axi_data))):
     study_id = kp_axi_data.iloc[i]['study_id']
-    for level in levels:
+    for level_idx, level in enumerate(levels):
         for side_idx, side in enumerate(sides):
             # Get series_id from coord_df
             series_id = coord_df.loc[
@@ -189,7 +199,7 @@ for i in tqdm(range(len(kp_axi_data))):
             ].values[0]
 
             # Get coordinates
-            x_norm, y_norm = get_coord_from_heatmap_pred(kp_axi_preds, i, side_idx)
+            x_norm, y_norm = get_coord_from_heatmap_pred(kp_axi_preds, i, level_idx, side_idx)
 
             # Insert into coord_df
             coord_df.loc[
@@ -201,7 +211,7 @@ for i in tqdm(range(len(kp_axi_data))):
 
 # Save coords
 coord_df.to_csv(
-    os.path.join(root_dir, 'data', 'processed', 'train_label_coordinates_predicted.csv'),
+    os.path.join(root_dir, 'data', 'processed', out_filename),
     index=False,
 )
 print('Done.')

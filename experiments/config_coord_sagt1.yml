@@ -15,7 +15,6 @@ labels:
   Moderate: 1
   Severe: 2
 
-
 model:
   type: CoordModel
   args:
@@ -31,6 +30,7 @@ dataset:
     heatmap_std: 10
     resolution: 512
     data_dir: data/raw
+    cleaning_rule: 'keep_only_complete'
 
 data_loader:
   type: BaseDataLoader
