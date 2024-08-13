@@ -24,16 +24,19 @@ def sagi_coord_to_axi_instance_number(sag_x_norm, sag_y_norm, mid_sag_ds, axi_ds
     # Calculate sagittal world coordinates based on middle slice
     sag_affine = dcm_affine(mid_sag_ds)
     sag_coord = np.array([sag_y_norm * mid_sag_ds.Rows, sag_x_norm * mid_sag_ds.Columns, 0, 1])
-    sag_world_coord = sag_affine @ sag_coord
+    sag_world_coord = (sag_affine @ sag_coord)[:-1]
 
     # Get closest axial slice
-    axi_coord_list = []
+    dist_list = []
     for ds in axi_ds_list:
-        affine = dcm_affine(ds)
-        axi_coord_list.append(affine @ np.array([ds.Rows // 2, ds.Columns // 2, 0, 1]))
-    axi_slice_idx = np.argmin(
-        [sum((axi_coord - sag_world_coord) ** 2) for axi_coord in axi_coord_list]
-    )
+        normal = np.cross(ds.ImageOrientationPatient[:3], ds.ImageOrientationPatient[3:])
+        normal /= np.linalg.norm(normal)
+        dist = np.abs(np.dot(sag_world_coord - ds.ImagePositionPatient, normal))
+        dist_list.append(dist)
+    axi_slice_idx = np.argmin(dist_list)
+    min_dist = dist_list[axi_slice_idx]
+    if min_dist > 5:
+        return np.nan, np.nan
     axi_series_id, axi_instance_number = axi_ds_list[axi_slice_idx].filename.split('/')[-2:]
 
     return axi_series_id, int(axi_instance_number.replace('.dcm', ''))

@@ -413,7 +413,7 @@ class ROIDataset(Dataset):
             self.series_filename = 'test_series_descriptions.csv'
         if self.phase == 'faketest':
             self.phase = 'test'
-        
+
         self.df = df
         self.data_dir = os.path.join(root_dir, data_dir)
         self.df_series = self.load_series_info()
@@ -447,7 +447,7 @@ class ROIDataset(Dataset):
         self.resolution = resolution
         self.roi_size = roi_size
         self.cleaning_rule = cleaning_rule
-        
+
         self.levels = ['l1_l2', 'l2_l3', 'l3_l4', 'l4_l5', 'l5_s1']
         self.sides = ['left', 'right']
 
@@ -569,12 +569,12 @@ class ROIDataset(Dataset):
         label = self.df[label_name].iloc[idx]
         label = np.nan_to_num(float(label), nan=0).astype(np.int64)
         return label
-    
+
     def get_level_onehot(self, level_name):
         level = np.zeros(len(self.levels), dtype=np.float32)
         level[self.levels.index(level_name)] = 1.0
         return level
-    
+
     def get_side_onehot(self, side_name):
         side = np.zeros(len(self.sides), dtype=np.float32)
         side[self.sides.index(side_name)] = 1.0
@@ -616,15 +616,22 @@ class ROIDataset(Dataset):
         if instance_number_type == 'middle':
             start_index = (slice_num - img_num) // 2
         elif instance_number_type == 'index':
-            start_index = max(instance_number - img_num // 2, 0)
+            start_index = instance_number - img_num // 2
         elif instance_number_type == 'filename':
-            start_index = max(
-                [int(file.rstrip('.dcm')) for file in file_list].index(instance_number)
-                - img_num // 2,
-                0,
-            )
+            start_index = [int(file.rstrip('.dcm')) for file in file_list].index(
+                instance_number
+            ) - img_num // 2
         elif instance_number_type == 'relative':
-            start_index = max(int(instance_number * slice_num) - img_num // 2, 0)
+            start_index = int(instance_number * slice_num) - img_num // 2
+        elif instance_number_type == 'centered_index':
+            start_index = slice_num // 2 + instance_number - img_num // 2
+        elif instance_number_type == 'centered_mm':
+            start_index = (
+                slice_num // 2
+                + round(instance_number / ds_first.SpacingBetweenSlices)
+                - img_num // 2
+            )
+        start_index = min(max(start_index, 0), slice_num)
         end_index = min(start_index + img_num, slice_num)
         file_list = file_list[start_index:end_index]
 
@@ -657,7 +664,7 @@ class ROIDataset(Dataset):
             x = (x - x.mean()) / x.std()
 
         return x
-    
+
     def __getitem__(self, idx):
         raise NotImplementedError('Please implement this method in a subclass')
 
@@ -741,10 +748,12 @@ class ForaminalROIDataset(ROIDataset):
         sagt1_x_norm, sagt1_y_norm, _ = self.get_sagt1_coord(
             row.study_id, sagt1_series_id, row.level, row.side
         )
+        
+        instance_number_type = 'centered_mm'
         if row.side == 'left':
-            instance_number = 0.70
+            instance_number = 13.3
         elif row.side == 'right':
-            instance_number = 0.26
+            instance_number = -20.0
 
         sagt1_roi = self.get_roi(
             study_id=row.study_id,
@@ -754,7 +763,7 @@ class ForaminalROIDataset(ROIDataset):
             roi_size=self.roi_size,
             x_norm=sagt1_x_norm,
             y_norm=sagt1_y_norm,
-            instance_number_type='relative',
+            instance_number_type=instance_number_type,
             instance_number=instance_number,
         )
 
@@ -844,6 +853,40 @@ class SubarticularROIDataset(ForaminalROIDataset):
             return sagt2_roi, level, side, label
         elif self.phase == 'test':
             return sagt2_roi, level, side, 0
+
+
+class SubarticularROIDatasetV2(ForaminalROIDataset):
+    # Axi dataset for testing
+    def __getitem__(self, idx):
+        row = self.df.iloc[idx]
+
+        # Axial T2 central ROI
+        axi_x_norm, axi_y_norm, axi_instance_number, axi_series_id = self.get_axi_coord(
+            row.study_id, row.level, row.side
+        )
+
+        axi_roi = self.get_roi(
+            study_id=row.study_id,
+            series_id=axi_series_id,
+            img_num=self.img_num,
+            resolution=self.resolution,
+            roi_size=self.roi_size,
+            x_norm=axi_x_norm,
+            y_norm=axi_y_norm,
+            instance_number_type='filename',
+            instance_number=axi_instance_number,
+        )
+
+        if self.transform:
+            axi_roi = self.transform(image=axi_roi)['image']
+
+        level = self.get_level_onehot(row.level)
+        side = self.get_side_onehot(row.side)
+        if self.phase in ['train', 'valid', 'predict']:
+            label = self.get_label(idx, 'subarticular_stenosis')
+            return axi_roi, level, side, label
+        elif self.phase == 'test':
+            return axi_roi, level, side, 0
 
 
 class BaseDataset(Dataset):
