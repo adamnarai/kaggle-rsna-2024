@@ -36,7 +36,7 @@ def sagi_coord_to_axi_instance_number(sag_x_norm, sag_y_norm, mid_sag_ds, axi_ds
     axi_slice_idx = np.argmin(dist_list)
     min_dist = dist_list[axi_slice_idx]
     if min_dist > 5:
-        return np.nan, np.nan
+        return None, np.nan
     axi_series_id, axi_instance_number = axi_ds_list[axi_slice_idx].filename.split('/')[-2:]
 
     return axi_series_id, int(axi_instance_number.replace('.dcm', ''))

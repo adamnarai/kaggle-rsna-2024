@@ -7,7 +7,6 @@ benchmark: False
 # Wandb
 use_wandb: True
 tags:
-  - tiles_axi
   - subarticular_roi
 notes: ''
 
@@ -17,17 +16,17 @@ labels:
   Severe: 2
 
 model:
-  type: SubarticularROIModel
+  type: SubarticularROIModelV2
   args:
     base_model: resnet18
     num_classes: 3
-    in_channels: 5
+    in_channels: 1
     pretrained: True
 
 dataset:
-  type: SubarticularROIDataset
+  type: SubarticularROIDatasetV2
   args:
-    img_num: 5
+    img_num: 7
     roi_size: 50
     resolution: 128
     data_dir: data/raw
@@ -48,6 +47,7 @@ train_transform:
     rotate: [-15, 15]
     shear: {'x': [-15, 15], 'y': [-15, 15]}
     p: 1.0
+    # channel_shuffle_p: 0
 
 valid_transform:
   type: NoAug

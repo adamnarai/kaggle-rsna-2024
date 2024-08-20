@@ -37,7 +37,7 @@ class CoordDataset(Dataset):
             self.series_filename = 'test_series_descriptions.csv'
         if self.phase == 'faketest':
             self.phase = 'test'
-        
+
         self.df = df
         self.data_dir = os.path.join(root_dir, data_dir)
         self.df_series = self.load_series_info()
@@ -75,7 +75,7 @@ class CoordDataset(Dataset):
             os.path.join(self.data_dir, '..', 'processed', 'train_label_coordinates.csv'),
             dtype={'study_id': 'str', 'series_id': 'str'},
         )
-        
+
     def __len__(self):
         return len(self.df)
 
@@ -113,7 +113,7 @@ class CoordDataset(Dataset):
             return None
         return res
 
-    def get_series_with_coords(self, study_id, series_description, level=None):
+    def get_series_with_coords(self, study_id, series_description, level=None, side=None):
         # Get expected vars in standard order
         if series_description == 'Sagittal T2/STIR':
             expected_vars = [f'spinal_canal_stenosis_{lvl}' for lvl in self.levels]
@@ -121,7 +121,6 @@ class CoordDataset(Dataset):
             expected_vars = [
                 f'{side}_neural_foraminal_narrowing_{lvl}'
                 for lvl in self.levels
-                for side in self.sides
             ]
         elif series_description == 'Axial T2':
             expected_vars = [f'{side}_subarticular_stenosis_{level}' for side in self.sides]
@@ -205,15 +204,23 @@ class CoordDataset(Dataset):
         if instance_number_type == 'middle':
             start_index = (slice_num - self.img_num) // 2
         elif instance_number_type == 'index':
-            start_index = max(instance_number - self.img_num // 2, 0)
+            start_index = instance_number - self.img_num // 2
         elif instance_number_type == 'filename':
-            start_index = max(
-                [int(file.rstrip('.dcm')) for file in file_list].index(instance_number)
-                - self.img_num // 2,
-                0,
-            )
+            start_index = [int(file.rstrip('.dcm')) for file in file_list].index(
+                instance_number
+            ) - self.img_num // 2
         elif instance_number_type == 'relative':
-            start_index = max(int(instance_number * slice_num) - self.img_num // 2, 0)
+            start_index = int(instance_number * slice_num) - self.img_num // 2
+        elif instance_number_type == 'centered_mm':
+            try:
+                start_index = (
+                    slice_num // 2
+                    + round(instance_number / float(ds_first.SpacingBetweenSlices))
+                    - self.img_num // 2
+                )
+            except:
+                start_index = slice_num // 2 - self.img_num // 2
+        start_index = min(max(start_index, 0), slice_num)
         end_index = min(start_index + self.img_num, slice_num)
         file_list = file_list[start_index:end_index]
 
@@ -230,7 +237,7 @@ class CoordDataset(Dataset):
             x = (x - x.mean()) / x.std()
 
         return x
-    
+
     def __getitem__(self, idx):
         raise NotImplementedError('Please implement this method in a subclass')
 
@@ -277,6 +284,29 @@ class Sagt1CoordDataset(CoordDataset):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
+        # Split for sides
+        def side_at_end(colname):
+            splits = colname.split('_')
+            if splits[0] in self.sides:
+                return '_'.join(splits[1:] + [splits[0]])
+            else:
+                return colname
+
+        self.df = self.df.rename(columns=side_at_end)
+
+        self.df = pd.wide_to_long(
+            self.df,
+            [
+                f'{cond}_{level}'
+                for cond in ['neural_foraminal_narrowing', 'subarticular_stenosis']
+                for level in self.levels
+            ],
+            i='study_id',
+            j='side',
+            sep='_',
+            suffix=r'\w+',
+        ).reset_index()
+
         # Clean data
         if self.phase in ['train', 'valid']:
             if self.cleaning_rule == 'keep_only_complete':
@@ -287,23 +317,27 @@ class Sagt1CoordDataset(CoordDataset):
                 )
                 good_study_ids = coord_counts[coord_counts == 10].index.astype(str).tolist()
                 self.df = self.df[self.df['study_id'].isin(good_study_ids)]
-            
+
     def __getitem__(self, idx):
         row = self.df.iloc[idx]
 
         if self.phase in ['train', 'valid', 'predict']:
-            series_id, coords, _ = self.get_series_with_coords(row.study_id, 'Sagittal T1')
-            # Average left/right coordinates
-            with warnings.catch_warnings():
-                warnings.simplefilter('ignore', category=RuntimeWarning)
-                coords = np.nanmean(coords.reshape(2, -1, 2, order='F'), axis=0)
-            img_left = self.get_image(
-                row.study_id, series_id, instance_number_type='relative', instance_number=0.70
+            series_id, coords, _ = self.get_series_with_coords(
+                row.study_id, 'Sagittal T1', side=row.side
             )
-            img_right = self.get_image(
-                row.study_id, series_id, instance_number_type='relative', instance_number=0.26
+
+            instance_number_type = 'centered_mm'
+            if row.side == 'left':
+                instance_number = 13.3
+            elif row.side == 'right':
+                instance_number = -20.0
+
+            img = self.get_image(
+                row.study_id,
+                series_id,
+                instance_number_type=instance_number_type,
+                instance_number=instance_number,
             )
-            img = np.concatenate([img_left, img_right], axis=-1)
 
             heatmaps = self.create_heatmaps(coords * self.resolution)
             if self.transform:
@@ -316,16 +350,23 @@ class Sagt1CoordDataset(CoordDataset):
             series_id = self.get_series(row.study_id, 'Sagittal T1')
             if series_id is not None:
                 series_id = series_id[0]  # get the first series_id
-            img_left = self.get_image(
-                row.study_id, series_id, instance_number_type='relative', instance_number=0.70
+
+            instance_number_type = 'centered_mm'
+            if row.side == 'left':
+                instance_number = 13.3
+            elif row.side == 'right':
+                instance_number = -20.0
+
+            img = self.get_image(
+                row.study_id,
+                series_id,
+                instance_number_type=instance_number_type,
+                instance_number=instance_number,
             )
-            img_right = self.get_image(
-                row.study_id, series_id, instance_number_type='relative', instance_number=0.26
-            )
-            img = np.concatenate([img_left, img_right], axis=-1)
+
             if self.transform:
                 img = self.transform(image=img)['image']
-            return img, 0
+            return img, row.study_id, row.side
 
 
 class AxiCoordDataset(CoordDataset):
@@ -386,7 +427,7 @@ class AxiCoordDataset(CoordDataset):
             if self.transform:
                 img = self.transform(image=img)['image']
 
-            return img, 0
+            return img, row.study_id, row.level
 
 
 class ROIDataset(Dataset):
@@ -555,7 +596,7 @@ class ROIDataset(Dataset):
 
         if coords.shape[0] == 0:
             self.logger.warning('AXI %s %s %s no coordinates found', study_id, level, side)
-            return np.nan, np.nan, np.nan, ''
+            return np.nan, np.nan, np.nan, None
 
         if coords.shape[0] > 1:
             self.logger.warning('AXI %s %s %s multiple coordinates found', study_id, level, side)
@@ -626,11 +667,14 @@ class ROIDataset(Dataset):
         elif instance_number_type == 'centered_index':
             start_index = slice_num // 2 + instance_number - img_num // 2
         elif instance_number_type == 'centered_mm':
-            start_index = (
-                slice_num // 2
-                + round(instance_number / ds_first.SpacingBetweenSlices)
-                - img_num // 2
-            )
+            try:
+                start_index = (
+                    slice_num // 2
+                    + round(instance_number / float(ds_first.SpacingBetweenSlices))
+                    - img_num // 2
+                )
+            except:
+                start_index = slice_num // 2 - img_num // 2
         start_index = min(max(start_index, 0), slice_num)
         end_index = min(start_index + img_num, slice_num)
         file_list = file_list[start_index:end_index]
@@ -669,21 +713,7 @@ class ROIDataset(Dataset):
         raise NotImplementedError('Please implement this method in a subclass')
 
 
-class SpinalROIDataset(ROIDataset):    
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-
-        # # Clean data
-        # if self.phase in ['train', 'valid']:
-        #     if self.cleaning_rule == 'keep_only_complete':
-        #         coord_counts = (
-        #             self.df_coordinates[self.df_coordinates['row_id'].str.contains('spinal_canal_stenosis')]
-        #             .groupby('study_id')
-        #             .count()['series_id']
-        #         )
-        #         good_study_ids = coord_counts[coord_counts == 5].index.astype(str).tolist()
-        #         self.df = self.df[self.df['study_id'].isin(good_study_ids)]
-
+class SpinalROIDataset(ROIDataset):
     def __getitem__(self, idx):
         row = self.df.iloc[idx]
 
@@ -715,6 +745,71 @@ class SpinalROIDataset(ROIDataset):
             return sagt2_roi, level, label
         elif self.phase in ['test']:
             return sagt2_roi, level, 0
+
+
+class SpinalROIDatasetV2(ROIDataset):
+    def __getitem__(self, idx):
+        row = self.df.iloc[idx]
+
+        # Sagittal T2/STIR central ROI
+        sagt2_series_id = self.get_series(row.study_id, 'Sagittal T2/STIR')
+        if sagt2_series_id is not None:
+            sagt2_series_id = sagt2_series_id[0]
+        sagt2_x_norm, sagt2_y_norm, _ = self.get_sagt2_coord(
+            row.study_id, sagt2_series_id, row.level
+        )
+        sagt2_roi = self.get_roi(
+            study_id=row.study_id,
+            series_id=sagt2_series_id,
+            img_num=self.img_num[0],
+            resolution=self.resolution,
+            roi_size=self.roi_size,
+            x_norm=sagt2_x_norm,
+            y_norm=sagt2_y_norm,
+            instance_number_type='middle',
+        )
+
+        # Axial T2 central ROI
+        left_axi_x_norm, left_axi_y_norm, left_axi_instance_number, left_axi_series_id = (
+            self.get_axi_coord(row.study_id, row.level, 'left')
+        )
+        right_axi_x_norm, right_axi_y_norm, right_axi_instance_number, right_axi_series_id = (
+            self.get_axi_coord(row.study_id, row.level, 'right')
+        )
+        
+        with warnings.catch_warnings():
+            warnings.simplefilter('ignore', category=RuntimeWarning)
+            axi_x_norm = np.nanmean([left_axi_x_norm, right_axi_x_norm])
+            axi_y_norm = np.nanmean([left_axi_y_norm, right_axi_y_norm])
+        if not np.isnan(left_axi_instance_number):
+            axi_instance_number = left_axi_instance_number
+            axi_series_id = left_axi_series_id
+        else:
+            axi_instance_number = right_axi_instance_number
+            axi_series_id = right_axi_series_id
+            
+        axi_roi = self.get_roi(
+            study_id=row.study_id,
+            series_id=axi_series_id,
+            img_num=self.img_num[1],
+            resolution=self.resolution,
+            roi_size=self.roi_size,
+            x_norm=axi_x_norm,
+            y_norm=axi_y_norm,
+            instance_number_type='filename',
+            instance_number=axi_instance_number,
+        )
+
+        if self.transform:
+            sagt2_roi = self.transform(image=sagt2_roi)['image']   
+            axi_roi = self.transform(image=axi_roi)['image']
+
+        level = self.get_level_onehot(row.level)
+        if self.phase in ['train', 'valid', 'predict']:
+            label = self.get_label(idx, 'spinal_canal_stenosis')
+            return sagt2_roi, axi_roi, level, label
+        elif self.phase in ['test']:
+            return sagt2_roi, axi_roi, level, 0
 
 
 class ForaminalROIDataset(ROIDataset):
@@ -777,6 +872,73 @@ class ForaminalROIDataset(ROIDataset):
             return sagt1_roi, level, side, label
         elif self.phase in ['test']:
             return sagt1_roi, level, side, 0
+
+
+class ForaminalROIDatasetV2(ForaminalROIDataset):
+    def __getitem__(self, idx):
+        row = self.df.iloc[idx]
+
+        # Sagittal T1
+        sagt1_series_id = self.get_series(row.study_id, 'Sagittal T1')
+        sagt1_series_id = sagt1_series_id[0] if sagt1_series_id is not None else None
+        sagt1_x_norm, sagt1_y_norm, _ = self.get_sagt1_coord(
+            row.study_id, sagt1_series_id, row.level, row.side
+        )
+        
+        instance_number_type = 'centered_mm'
+        if row.side == 'left':
+            instance_number = 13.3
+        elif row.side == 'right':
+            instance_number = -20.0
+
+        sagt1_roi = self.get_roi(
+            study_id=row.study_id,
+            series_id=sagt1_series_id,
+            img_num=self.img_num,
+            resolution=self.resolution,
+            roi_size=self.roi_size,
+            x_norm=sagt1_x_norm,
+            y_norm=sagt1_y_norm,
+            instance_number_type=instance_number_type,
+            instance_number=instance_number,
+        )
+        
+        # Sagittal T2
+        sagt2_series_id = self.get_series(row.study_id, 'Sagittal T2/STIR')
+        sagt2_series_id = sagt2_series_id[0] if sagt2_series_id is not None else None
+        sagt2_x_norm, sagt2_y_norm, _ = self.get_sagt2_coord(
+            row.study_id, sagt1_series_id, row.level
+        )
+        
+        instance_number_type = 'centered_mm'
+        if row.side == 'left':
+            instance_number = 13.3
+        elif row.side == 'right':
+            instance_number = -20.0
+
+        sagt2_roi = self.get_roi(
+            study_id=row.study_id,
+            series_id=sagt2_series_id,
+            img_num=self.img_num,
+            resolution=self.resolution,
+            roi_size=self.roi_size,
+            x_norm=sagt2_x_norm,
+            y_norm=sagt2_y_norm,
+            instance_number_type=instance_number_type,
+            instance_number=instance_number,
+        )
+
+        if self.transform:
+            sagt1_roi = self.transform(image=sagt1_roi)['image']
+            sagt2_roi = self.transform(image=sagt2_roi)['image']
+
+        level = self.get_level_onehot(row.level)
+        side = self.get_side_onehot(row.side)
+        if self.phase in ['train', 'valid', 'predict']:
+            label = self.get_label(idx, 'neural_foraminal_narrowing')
+            return sagt1_roi, sagt2_roi, level, side, label
+        elif self.phase in ['test']:
+            return sagt1_roi, sagt2_roi, level, side, 0
 
 
 class SubarticularROIDataset(ForaminalROIDataset):

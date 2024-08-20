@@ -22,7 +22,7 @@ from rsna2024.utils import natural_sort, sagi_coord_to_axi_instance_number, get_
 
 # Params
 sagt2_model_name = 'glad-moon-593'  #'glad-moon-593'
-sagt1_model_name = 'skilled-totem-601'  #'different-cherry-611' #'skilled-totem-601'
+sagt1_model_name = 'leafy-cherry-654'  #'different-cherry-611' #'skilled-totem-601'
 axi_model_name = 'scarlet-feather-603'  #'silvery-waterfall-612' #'scarlet-feather-603'
 out_filename = 'train_label_coordinates_predicted_{}_{}_{}.csv'.format(
     sagt2_model_name.split('-')[-1], sagt1_model_name.split('-')[-1], axi_model_name.split('-')[-1]
@@ -48,9 +48,12 @@ def load_config(config_path):
 
 def get_sagi2axi_data(study_id, series_id):
     sag_dir = os.path.join(img_dir, str(study_id), str(series_id))
+    axi_series = get_series(df_series, study_id, 'Axial T2')
+    if axi_series is None:
+        return None, None
     axi_dir_list = [
         os.path.join(img_dir, str(study_id), str(axi_series_id))
-        for axi_series_id in get_series(df_series, study_id, 'Axial T2')
+        for axi_series_id in axi_series
     ]
     if os.path.isdir(sag_dir) and len(axi_dir_list) != 0:
         sag_file_list = natural_sort(os.listdir(sag_dir))
@@ -152,16 +155,28 @@ kp_sagt1_data = (
     .drop_duplicates('study_id')
 )
 
+# For separate sides
+kp_sagt1_preds = (
+    kp_sagt1_preds.reshape(5, 2, -1, *kp_sagt1_preds.shape[1:4])
+    .swapaxes(1, 2)
+    .reshape(-1, 2, *kp_sagt1_preds.shape[1:4])
+)
+
 coord_df_list = []
 for i in tqdm(range(len(kp_sagt1_data))):
+    study_id = kp_sagt1_data.iloc[i]['study_id']
+    series_id = kp_sagt1_data.iloc[i]['series_id']
     for level_idx, level in enumerate(levels):
-        for side in sides:
+        for side_idx, side in enumerate(sides):
             # Get coordinates
-            x_norm, y_norm = get_coord_from_heatmap_pred(kp_sagt1_preds, i, level_idx)
+            # x_norm, y_norm = get_coord_from_heatmap_pred(kp_sagt1_preds, i, level_idx)
+            # For separate sides
+            x_norm, y_norm = get_coord_from_heatmap_pred(kp_sagt1_preds, i, side_idx, level_idx)
+            
             coord_df_list.append(
                 {
-                    'study_id': kp_sagt1_data.iloc[i]['study_id'],
-                    'series_id': kp_sagt1_data.iloc[i]['series_id'],
+                    'study_id': study_id,
+                    'series_id': series_id,
                     'condition': side.capitalize() + ' Neural Foraminal Narrowing',
                     'level': level.replace('_', '/').upper(),
                     'x_norm': x_norm,
