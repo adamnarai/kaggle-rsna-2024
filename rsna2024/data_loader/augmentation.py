@@ -62,3 +62,23 @@ class CombinedV1(TransformFactory):
                 ToTensorV2(),
             ]
         )
+        
+def ch_revert(image, **kwargs):
+    return image[..., ::-1]
+
+class CombinedChRevert(TransformFactory):
+    def __init__(self, scale, translate_percent, rotate, shear, p=1.0):
+        self.aug = A.Compose(
+            [
+                A.OneOf([A.Sharpen(p=0.5), A.MotionBlur(p=0.5)], p=0.5),
+                A.Lambda(image=ch_revert, p=0.5),
+                A.Affine(
+                    scale=scale,
+                    translate_percent=translate_percent,
+                    rotate=rotate,
+                    shear=shear,
+                    p=p,
+                ),
+                ToTensorV2(),
+            ]
+        )

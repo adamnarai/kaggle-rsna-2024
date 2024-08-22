@@ -21,12 +21,12 @@ model:
     base_model: DeepLabV3Plus
     encoder_name: resnet34
     num_classes: 5
-    in_channels: 6
+    in_channels: 5
 
 dataset:
   type: Sagt1CoordDataset
   args:
-    img_num: 3
+    img_num: 5
     heatmap_std: 10
     resolution: 512
     data_dir: data/raw

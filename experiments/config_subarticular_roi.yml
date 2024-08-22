@@ -16,7 +16,7 @@ labels:
   Severe: 2
 
 model:
-  type: SubarticularROIModelV2
+  type: SubarticularROIModelV3
   args:
     base_model: resnet18
     num_classes: 3
@@ -24,9 +24,9 @@ model:
     pretrained: True
 
 dataset:
-  type: SubarticularROIDatasetV2
+  type: SubarticularROIDatasetV3
   args:
-    img_num: 7
+    img_num: 5
     roi_size: 50
     resolution: 128
     data_dir: data/raw
@@ -47,7 +47,6 @@ train_transform:
     rotate: [-15, 15]
     shear: {'x': [-15, 15], 'y': [-15, 15]}
     p: 1.0
-    # channel_shuffle_p: 0
 
 valid_transform:
   type: NoAug
