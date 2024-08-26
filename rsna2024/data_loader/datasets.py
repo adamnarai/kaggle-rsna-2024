@@ -29,7 +29,7 @@ class CoordDataset(Dataset):
         transform=None,
     ):
         self.phase = phase
-        if self.phase in ['train', 'valid', 'predict', 'faketest']:
+        if self.phase in ['train', 'valid', 'predict', 'faketest', 'valid_check']:
             self.img_subdir = 'train_images'
             self.series_filename = 'train_series_descriptions.csv'
         elif self.phase == 'test':
@@ -108,10 +108,10 @@ class CoordDataset(Dataset):
         return torch.stack(heatmaps, dim=-1).numpy()
 
     def most_frequent(self, l):
-        res = max(set(l), key=l.count)
-        if isinstance(res, float) and np.isnan(res):
+        l = [l_ for l_ in l if not (isinstance(l_, float) and np.isnan(l_))]
+        if len(l) == 0:
             return None
-        return res
+        return max(l, key=l.count)
 
     def get_series_with_coords(self, study_id, series_description, level=None, side=None):
         # Get expected vars in standard order
@@ -139,7 +139,6 @@ class CoordDataset(Dataset):
         if series_id is None:
             instance_number = np.nan
         else:
-            # get the first instance number for the series
             instance_number = self.most_frequent(
                 series_coords[series_coords['series_id'] == series_id][
                     'instance_number'
@@ -244,7 +243,7 @@ class Sagt2CoordDataset(CoordDataset):
         super().__init__(*args, **kwargs)
 
         # Clean data
-        if self.phase in ['train', 'valid']:
+        if self.phase in ['train', 'valid', 'valid_check']:
             if self.cleaning_rule == 'keep_only_complete':
                 coord_counts = (
                     self.df_coordinates[
@@ -259,7 +258,7 @@ class Sagt2CoordDataset(CoordDataset):
     def __getitem__(self, idx):
         row = self.df.iloc[idx]
 
-        if self.phase in ['train', 'valid', 'predict']:
+        if self.phase in ['train', 'valid', 'predict', 'valid_check']:
             series_id, coords, _ = self.get_series_with_coords(row.study_id, 'Sagittal T2/STIR')
             img = self.get_image(row.study_id, series_id, instance_number_type='middle')
 
@@ -268,6 +267,12 @@ class Sagt2CoordDataset(CoordDataset):
                 t = self.transform(image=img, mask=heatmaps)
                 img, heatmaps = t['image'], t['mask']
             heatmaps = np.transpose(heatmaps, (2, 0, 1))
+            
+            if self.phase == 'valid_check':
+                if series_id is None:
+                    series_id = ''
+                return img, heatmaps, row.study_id, series_id
+            
             return img, heatmaps
 
         elif self.phase in ['test']:

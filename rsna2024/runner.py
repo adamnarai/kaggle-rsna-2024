@@ -96,7 +96,7 @@ class RunnerBase:
         os.makedirs(self.model_dir, exist_ok=True)
         
     def get_dataloader(self, df, phase, df_coordinates=None):
-        if phase in ['valid', 'predict', 'test', 'faketest']:
+        if phase in ['valid', 'predict', 'test', 'faketest', 'valid_check']:
             transform_name = 'valid_transform'
             data_loader_phase = 'valid'
         else:

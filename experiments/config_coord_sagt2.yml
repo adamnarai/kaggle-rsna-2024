@@ -71,5 +71,5 @@ trainer:
   epochs: 30
   cv_fold: 5
   one_fold: False
-  metrics: ['loss']
+  metrics: ['loss', 'heatmap_peak_mse']
   type: standard

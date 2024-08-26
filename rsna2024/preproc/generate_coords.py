@@ -21,9 +21,9 @@ from rsna2024.runner import Runner
 from rsna2024.utils import natural_sort, sagi_coord_to_axi_instance_number, get_series
 
 # Params
-sagt2_model_name = 'glad-moon-593'  #'glad-moon-593'
-sagt1_model_name = 'leafy-cherry-654'  #'different-cherry-611' #'skilled-totem-601'
-axi_model_name = 'scarlet-feather-603'  #'silvery-waterfall-612' #'scarlet-feather-603'
+sagt2_model_name = 'smooth-sound-778'  #'glad-moon-593'
+sagt1_model_name = 'leafy-cherry-654'  #'leafy-cherry-654'
+axi_model_name = 'scarlet-feather-603' #'scarlet-feather-603'
 out_filename = 'train_label_coordinates_predicted_{}_{}_{}.csv'.format(
     sagt2_model_name.split('-')[-1], sagt1_model_name.split('-')[-1], axi_model_name.split('-')[-1]
 )
@@ -168,9 +168,6 @@ for i in tqdm(range(len(kp_sagt1_data))):
     series_id = kp_sagt1_data.iloc[i]['series_id']
     for level_idx, level in enumerate(levels):
         for side_idx, side in enumerate(sides):
-            # Get coordinates
-            # x_norm, y_norm = get_coord_from_heatmap_pred(kp_sagt1_preds, i, level_idx)
-            # For separate sides
             x_norm, y_norm = get_coord_from_heatmap_pred(kp_sagt1_preds, i, side_idx, level_idx)
             
             coord_df_list.append(
