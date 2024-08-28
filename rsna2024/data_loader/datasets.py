@@ -136,6 +136,14 @@ class CoordDataset(Dataset):
 
         series_list = series_coords['series_id'].unique().tolist()
         series_id = self.most_frequent(series_list)
+
+        # Try getting series_id directly
+        if self.phase != 'train':
+            if series_id is None:
+                series_id = self.get_series(study_id, series_description)
+                if series_id is not None:
+                    series_id = series_id[0]
+
         if series_id is None:
             instance_number = np.nan
         else:
@@ -159,6 +167,17 @@ class CoordDataset(Dataset):
             (self.df_series['study_id'] == study_id)
             & (self.df_series['series_description'] == series_description)
         ]['series_id'].tolist()
+
+        # Try to substitute T1 for T2 or vice versa
+        if len(series_list) == 0:
+            if series_description == 'Sagittal T2/STIR':
+                series_description = 'Sagittal T1'
+            elif series_description == 'Sagittal T1':
+                series_description = 'Sagittal T2/STIR'
+            series_list = self.df_series[
+                (self.df_series['study_id'] == study_id)
+                & (self.df_series['series_description'] == series_description)
+            ]['series_id'].tolist()
 
         if len(series_list) == 0:
             self.logger.warning('%s %s not found', study_id, series_description)
@@ -355,7 +374,7 @@ class Sagt1CoordDataset(CoordDataset):
             if self.phase == 'valid_check':
                 if series_id is None:
                     series_id = ''
-                return img, heatmaps, row.study_id, series_id
+                return img, heatmaps, row.study_id, series_id, row.side
             
             return img, heatmaps
 
@@ -461,7 +480,6 @@ class ROIDataset(Dataset):
         phase='train',
         df_coordinates=None,
         cleaning_rule=None,
-        coord_model_names={},  # TODO: future remove
         transform=None,
     ):
         self.phase = phase
@@ -536,6 +554,17 @@ class ROIDataset(Dataset):
             (self.df_series['study_id'] == study_id)
             & (self.df_series['series_description'] == series_description)
         ]['series_id'].tolist()
+        
+        # Try to substitute T1 for T2 or vice versa
+        if len(series_list) == 0:
+            if series_description == 'Sagittal T2/STIR':
+                series_description = 'Sagittal T1'
+            elif series_description == 'Sagittal T1':
+                series_description = 'Sagittal T2/STIR'
+            series_list = self.df_series[
+                (self.df_series['study_id'] == study_id)
+                & (self.df_series['series_description'] == series_description)
+            ]['series_id'].tolist()
 
         if len(series_list) == 0:
             self.logger.warning('%s %s not found', study_id, series_description)
