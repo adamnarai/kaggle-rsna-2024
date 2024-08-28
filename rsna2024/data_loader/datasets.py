@@ -209,13 +209,14 @@ class CoordDataset(Dataset):
             start_index = int(instance_number * slice_num) - self.img_num // 2
         elif instance_number_type == 'centered_mm':
             try:
-                start_index = (
-                    slice_num // 2
-                    + round(instance_number / float(ds_first.SpacingBetweenSlices))
-                    - self.img_num // 2
+                start_index = int(
+                    np.ceil(
+                        (instance_number / float(ds_first.SpacingBetweenSlices) + slice_num / 2 - 1)
+                        - self.img_num / 2
+                    )
                 )
             except:
-                start_index = slice_num // 2 - self.img_num // 2
+                start_index = (slice_num - self.img_num) // 2
         start_index = min(max(start_index, 0), slice_num)
         end_index = min(start_index + self.img_num, slice_num)
         file_list = file_list[start_index:end_index]
@@ -313,7 +314,7 @@ class Sagt1CoordDataset(CoordDataset):
         ).reset_index()
 
         # Clean data
-        if self.phase in ['train', 'valid']:
+        if self.phase in ['train', 'valid', 'valid_check']:
             if self.cleaning_rule == 'keep_only_complete':
                 coord_counts = (
                     self.df_coordinates[
@@ -328,16 +329,15 @@ class Sagt1CoordDataset(CoordDataset):
     def __getitem__(self, idx):
         row = self.df.iloc[idx]
 
-        if self.phase in ['train', 'valid', 'predict']:
+        if self.phase in ['train', 'valid', 'predict', 'valid_check']:
             series_id, coords, _ = self.get_series_with_coords(
                 row.study_id, 'Sagittal T1', side=row.side
             )
 
             instance_number_type = 'centered_mm'
-            if row.side == 'left':
-                instance_number = 13.3
-            elif row.side == 'right':
-                instance_number = -20.0
+            instance_number = 16.8
+            if row.side == 'right':
+                instance_number = -1 * instance_number
 
             img = self.get_image(
                 row.study_id,
@@ -351,6 +351,12 @@ class Sagt1CoordDataset(CoordDataset):
                 t = self.transform(image=img, mask=heatmaps)
                 img, heatmaps = t['image'], t['mask']
             heatmaps = np.transpose(heatmaps, (2, 0, 1))
+            
+            if self.phase == 'valid_check':
+                if series_id is None:
+                    series_id = ''
+                return img, heatmaps, row.study_id, series_id
+            
             return img, heatmaps
 
         elif self.phase in ['test']:
@@ -359,10 +365,9 @@ class Sagt1CoordDataset(CoordDataset):
                 series_id = series_id[0]  # get the first series_id
 
             instance_number_type = 'centered_mm'
-            if row.side == 'left':
-                instance_number = 13.3
-            elif row.side == 'right':
-                instance_number = -20.0
+            instance_number = 16.8
+            if row.side == 'right':
+                instance_number = -1 * instance_number
 
             img = self.get_image(
                 row.study_id,
@@ -397,7 +402,7 @@ class AxiCoordDataset(CoordDataset):
         ).reset_index()
 
         # Clean data
-        if self.phase in ['train', 'valid']:
+        if self.phase in ['train', 'valid', 'valid_check']:
             if self.cleaning_rule == 'keep_only_complete':
                 coord_counts = (
                     self.df_coordinates[
@@ -423,12 +428,17 @@ class AxiCoordDataset(CoordDataset):
             instance_number=instance_number,
         )
 
-        if self.phase in ['train', 'valid', 'predict']:
+        if self.phase in ['train', 'valid', 'predict', 'valid_check']:
             heatmaps = self.create_heatmaps(coords * self.resolution)
             if self.transform:
                 t = self.transform(image=img, mask=heatmaps)
                 img, heatmaps = t['image'], t['mask']
             heatmaps = np.transpose(heatmaps, (2, 0, 1))
+            
+            if self.phase == 'valid_check':
+                if series_id is None:
+                    series_id = ''
+                return img, heatmaps, row.study_id, series_id
 
             return img, heatmaps
 
