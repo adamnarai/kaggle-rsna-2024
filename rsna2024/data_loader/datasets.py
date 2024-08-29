@@ -152,6 +152,8 @@ class CoordDataset(Dataset):
                     'instance_number'
                 ].values.tolist()
             )
+            if instance_number is None:
+                instance_number = np.nan
 
         if len(series_list) == 0:
             self.logger.warning('%s %s not found', study_id, series_description)
@@ -199,6 +201,8 @@ class CoordDataset(Dataset):
     ):
         x = np.zeros((self.resolution, self.resolution, self.img_num), dtype=np.float32)
         if series_id is None:
+            return x
+        if instance_number_type != 'middle' and np.isnan(instance_number):
             return x
         series_dir = os.path.join(self.img_dir, str(study_id), str(series_id))
         file_list = natural_sort(os.listdir(series_dir))
@@ -302,7 +306,7 @@ class Sagt2CoordDataset(CoordDataset):
             img = self.get_image(row.study_id, series_id, instance_number_type='middle')
             if self.transform:
                 img = self.transform(image=img)['image']
-            return img, 0
+            return img, row.study_id, series_id
 
 
 class Sagt1CoordDataset(CoordDataset):
@@ -397,7 +401,7 @@ class Sagt1CoordDataset(CoordDataset):
 
             if self.transform:
                 img = self.transform(image=img)['image']
-            return img, row.study_id, row.side
+            return img, row.study_id, series_id, row.side
 
 
 class AxiCoordDataset(CoordDataset):
@@ -465,7 +469,7 @@ class AxiCoordDataset(CoordDataset):
             if self.transform:
                 img = self.transform(image=img)['image']
 
-            return img, row.study_id, row.level
+            return img, row.study_id, series_id, row.level
 
 
 class ROIDataset(Dataset):
@@ -656,7 +660,7 @@ class ROIDataset(Dataset):
 
     def get_label(self, idx, label_name):
         label = self.df[label_name].iloc[idx]
-        label = np.nan_to_num(float(label), nan=0).astype(np.int64)
+        label = np.nan_to_num(float(label), nan=-100).astype(np.int64)
         return label
 
     def get_level_onehot(self, level_name):
@@ -685,6 +689,8 @@ class ROIDataset(Dataset):
     ):
         x = np.zeros((resolution, resolution, img_num), dtype=np.float32)
         if series_id is None or np.isnan(x_norm) or np.isnan(y_norm):
+            return x
+        if instance_number_type != 'middle' and np.isnan(instance_number):
             return x
         series_dir = os.path.join(self.img_dir, str(study_id), str(series_id))
         file_list = natural_sort(os.listdir(series_dir))
@@ -1209,7 +1215,7 @@ class BaseDataset(Dataset):
 
         if self.phase in ['train', 'valid', 'predict']:
             label = self.df[self.out_vars].iloc[idx].values
-            label = np.nan_to_num(label.astype(float), nan=0).astype(np.int64)
+            label = np.nan_to_num(label.astype(float), nan=-100).astype(np.int64)
             return x, label
 
         return x
@@ -1243,7 +1249,7 @@ class SplitDataset(BaseDataset):
 
         if self.phase in ['train', 'valid', 'predict']:
             label = self.df[self.out_vars].iloc[idx].values
-            label = np.nan_to_num(label.astype(float), nan=0).astype(np.int64)
+            label = np.nan_to_num(label.astype(float), nan=-100).astype(np.int64)
             return x1, x2, x3, label
         elif self.phase in ['test']:
             return x1, x2, x3, 0
