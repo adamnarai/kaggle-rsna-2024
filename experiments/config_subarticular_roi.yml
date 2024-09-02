@@ -30,7 +30,7 @@ dataset:
     roi_size: 50
     resolution: 128
     data_dir: data/raw
-    coord_inpute_file: train_label_coordinates_predicted_778_806_810
+    # coord_inpute_file: train_label_coordinates_predicted_778_806_810
     # resample_slice_spacing: 4.4
 
 data_loader:
@@ -71,7 +71,7 @@ scheduler:
     gamma: 0.1
 
 trainer:
-  epochs: 5
+  epochs: 3
   cv_fold: 5
   one_fold: False
   freeze_epochs: 0

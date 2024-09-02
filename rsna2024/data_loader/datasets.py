@@ -135,13 +135,6 @@ class CoordDataset(Dataset):
         series_list = series_coords['series_id'].unique().tolist()
         series_id = self.most_frequent(series_list)
 
-        # Try getting series_id directly
-        if self.phase != 'train':
-            if series_id is None:
-                series_id = self.get_series(study_id, series_description)
-                if series_id is not None:
-                    series_id = series_id[0]
-
         if series_id is None:
             instance_number = np.nan
         else:
@@ -200,7 +193,7 @@ class CoordDataset(Dataset):
         x = np.zeros((self.resolution, self.resolution, self.img_num), dtype=np.float32)
         if series_id is None:
             return x
-        if instance_number_type != 'middle' and np.isnan(instance_number):
+        if instance_number_type != 'middle' and pd.isnull(instance_number):
             return x
         series_dir = os.path.join(self.img_dir, str(study_id), str(series_id))
         file_list = natural_sort(os.listdir(series_dir))
@@ -304,6 +297,8 @@ class Sagt2CoordDataset(CoordDataset):
             img = self.get_image(row.study_id, series_id, instance_number_type='middle')
             if self.transform:
                 img = self.transform(image=img)['image']
+            if series_id is None:
+                series_id = ''
             return img, row.study_id, series_id
 
 
@@ -350,23 +345,31 @@ class Sagt1CoordDataset(CoordDataset):
     def __getitem__(self, idx):
         row = self.df.iloc[idx]
 
+        # Get series_id (and coords)
         if self.phase in ['train', 'valid', 'predict', 'valid_check']:
             series_id, coords, _ = self.get_series_with_coords(
                 row.study_id, 'Sagittal T1', side=row.side
             )
+        elif self.phase in ['test']:
+            series_id = self.get_series(row.study_id, 'Sagittal T1')
+            if series_id is not None:
+                series_id = series_id[0]  # get the first series_id
 
-            instance_number_type = 'centered_mm'
-            instance_number = 16.8
-            if row.side == 'right':
-                instance_number = -1 * instance_number
+        # Get image
+        instance_number_type = 'centered_mm'
+        instance_number = 16.8
+        if row.side == 'right':
+            instance_number = -1 * instance_number
 
-            img = self.get_image(
-                row.study_id,
-                series_id,
-                instance_number_type=instance_number_type,
-                instance_number=instance_number,
-            )
+        img = self.get_image(
+            row.study_id,
+            series_id,
+            instance_number_type=instance_number_type,
+            instance_number=instance_number,
+        )
 
+        # Return data (and heatmaps)
+        if self.phase in ['train', 'valid', 'predict', 'valid_check']:
             heatmaps = self.create_heatmaps(coords * self.resolution)
             if self.transform:
                 t = self.transform(image=img, mask=heatmaps)
@@ -385,20 +388,10 @@ class Sagt1CoordDataset(CoordDataset):
             if series_id is not None:
                 series_id = series_id[0]  # get the first series_id
 
-            instance_number_type = 'centered_mm'
-            instance_number = 16.8
-            if row.side == 'right':
-                instance_number = -1 * instance_number
-
-            img = self.get_image(
-                row.study_id,
-                series_id,
-                instance_number_type=instance_number_type,
-                instance_number=instance_number,
-            )
-
             if self.transform:
                 img = self.transform(image=img)['image']
+            if series_id is None:
+                series_id = ''
             return img, row.study_id, series_id, row.side
 
 
@@ -466,7 +459,8 @@ class AxiCoordDataset(CoordDataset):
         elif self.phase in ['test']:
             if self.transform:
                 img = self.transform(image=img)['image']
-
+            if series_id is None:
+                series_id = ''
             return img, row.study_id, series_id, row.level
 
 
@@ -709,7 +703,7 @@ class ROIDataset(Dataset):
         x = np.zeros((resolution, resolution, img_num), dtype=np.float32)
         if series_id is None or np.isnan(x_norm) or np.isnan(y_norm):
             return x
-        if instance_number_type != 'middle' and np.isnan(instance_number):
+        if instance_number_type != 'middle' and pd.isnull(instance_number):
             return x
         series_dir = os.path.join(self.img_dir, str(study_id), str(series_id))
         file_list = natural_sort(os.listdir(series_dir))
@@ -900,14 +894,15 @@ class ForaminalROIDataset(ROIDataset):
         )
 
         instance_number_type = 'centered_mm'
-        level_instance_number = {
-            'l1_l2': 14.9,
-            'l2_l3': 15.7,
-            'l3_l4': 16.7,
-            'l4_l5': 17.8,
-            'l5_s1': 18.9,
-        }
-        instance_number = level_instance_number[row.level]
+        # level_instance_number = {
+        #     'l1_l2': 14.9,
+        #     'l2_l3': 15.7,
+        #     'l3_l4': 16.7,
+        #     'l4_l5': 17.8,
+        #     'l5_s1': 18.9,
+        # }
+        # instance_number = level_instance_number[row.level]
+        instance_number = 16.8
         if row.side == 'right':
             instance_number = -1 * instance_number
 
@@ -975,7 +970,7 @@ class SubarticularROIDatasetV2(ForaminalROIDataset):
     def __getitem__(self, idx):
         row = self.df.iloc[idx]
 
-        # Axial T2 central ROI
+        # Axial T2 ROI
         axi_x_norm, axi_y_norm, axi_instance_number, axi_series_id = self.get_axi_coord(
             row.study_id, row.level, row.side
         )
@@ -998,8 +993,11 @@ class SubarticularROIDatasetV2(ForaminalROIDataset):
 
         level = self.get_level_onehot(row.level)
         side = self.get_side_onehot(row.side)
-        if self.phase in ['train', 'valid', 'predict']:
+        if self.phase in ['train', 'valid', 'predict', 'valid_check']:
             label = self.get_label(idx, 'subarticular_stenosis')
+            if self.phase == 'valid_check':
+                axi_series_id = '' if axi_series_id is None else axi_series_id
+                return axi_roi, level, side, label, row.study_id, axi_series_id, row.level, row.side
             return axi_roi, level, side, label
         elif self.phase == 'test':
             return axi_roi, level, side, 0

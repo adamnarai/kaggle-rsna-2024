@@ -257,3 +257,6 @@ class Runner(RunnerBase):
     def get_sample_batch(self):
         data_loader = self.get_dataloader(self.df, phase='train')
         return next(iter(data_loader))
+    
+    def get_data_loader(self, phase='train'):
+        return self.get_dataloader(self.df, phase=phase)
