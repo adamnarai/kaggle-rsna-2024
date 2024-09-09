@@ -21,7 +21,7 @@ from rsna2024.runner import Runner
 from rsna2024.utils import natural_sort, sagi_coord_to_axi_instance_number, get_series
 
 # Params
-sagt2_model_name = 'smooth-sound-778'  #'glad-moon-593'
+sagt2_model_name = 'glad-moon-593'  #'glad-moon-593'
 sagt1_model_name = 'leafy-cherry-654'  #'leafy-cherry-654'
 axi_model_name = 'scarlet-feather-603' #'scarlet-feather-603'
 out_filename = 'train_label_coordinates_predicted_{}_{}_{}.csv'.format(
@@ -78,6 +78,15 @@ def get_coord_from_heatmap_pred(pred, i, idx, idx2=None):
     y_norm = y_coord / predi.shape[0]
     return x_norm, y_norm
 
+def substitute_series_id(row, df_series, series_description):
+    if pd.isnull(row['series_id']):
+        series_list = df_series[
+            (df_series['study_id'] == row['study_id'])
+            & (df_series['series_description'] == series_description)
+        ]['series_id'].to_list()
+        if len(series_list) > 0:
+            return row['study_id'], series_list[0], series_description
+    return row['study_id'], row['series_id'], row['series_description']
 
 # Sagittal T2/STIR coordinates
 print('\nPredicting Sagittal T2/STIR coordinates and Axial T2 instance numbers...')
@@ -92,6 +101,13 @@ kp_sagt2_data = (
         df_series[df_series['series_description'] == 'Sagittal T2/STIR'], on='study_id', how='left'
     )
     .drop_duplicates('study_id')
+)
+kp_sagt2_data = kp_sagt2_data.apply(
+    substitute_series_id,
+    axis=1,
+    result_type='broadcast',
+    df_series=df_series,
+    series_description='Sagittal T1',
 )
 
 coord_df_sagt2_list = []
@@ -153,6 +169,13 @@ kp_sagt1_data = (
     kp_sagt1_data[['study_id']]
     .merge(df_series[df_series['series_description'] == 'Sagittal T1'], on='study_id', how='left')
     .drop_duplicates('study_id')
+)
+kp_sagt1_data = kp_sagt1_data.apply(
+    substitute_series_id,
+    axis=1,
+    result_type='broadcast',
+    df_series=df_series,
+    series_description='Sagittal T2/STIR',
 )
 
 # For separate sides
