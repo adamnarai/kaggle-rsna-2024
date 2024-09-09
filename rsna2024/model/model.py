@@ -7,6 +7,7 @@ import segmentation_models_pytorch as smp
 
 logging.getLogger('timm').setLevel(logging.WARNING)
 
+
 class CoordModel(nn.Module):
     def __init__(
         self,
@@ -91,6 +92,61 @@ class SplitROIFeatures(nn.Module):
         return x_split
 
 
+class SpinalROIModel(nn.Module):
+    def __init__(
+        self,
+        base_model,
+        num_classes,
+        in_channels=None,
+        pretrained=True,
+        rnn_hidden_size=512,
+        rnn_num_layers=2,
+        rnn_dropout=0,
+        rnn_bidirectional=False,
+    ):
+        super().__init__()
+        self.in_channels = in_channels
+        self.model = timm.create_model(
+            model_name=base_model,
+            pretrained=pretrained,
+            in_chans=self.in_channels,
+        )
+        self.feature_num = self.model.num_features
+        self.global_pool_2d = nn.AdaptiveAvgPool2d((1, 1))
+        self.global_pool_1d = nn.AdaptiveAvgPool1d(1)
+        self.rnn = nn.GRU(
+            input_size=self.feature_num,
+            hidden_size=rnn_hidden_size,
+            num_layers=rnn_num_layers,
+            dropout=rnn_dropout,
+            bidirectional=rnn_bidirectional,
+            batch_first=True,
+        )
+        if rnn_bidirectional:
+            fc_in_size = rnn_hidden_size * 2
+        else:
+            fc_in_size = rnn_hidden_size
+        self.classifier = nn.Linear(fc_in_size, num_classes)
+
+    def forward(self, x, level):
+        x_subset_list = []
+        start_size = self.in_channels // 2
+        end_size = self.in_channels - start_size
+        for i in range(start_size, x.shape[1] - end_size + 1):
+            x_subset = x[:, i - start_size : i + end_size, :, :]
+            x_subset = self.model.forward_features(x_subset)
+            x_subset = self.global_pool_2d(x_subset).flatten(start_dim=1)
+            x_subset_list.append(x_subset)
+        x_split = torch.stack(x_subset_list, dim=1)
+
+        # RNN
+        x_split, _ = self.rnn(x_split)
+        x_split = x_split.permute(0, 2, 1)
+        x_split = self.global_pool_1d(x_split).squeeze()
+
+        return self.classifier(x_split)
+
+
 class SpinalROIModelV2(nn.Module):
     def __init__(
         self,
@@ -106,7 +162,7 @@ class SpinalROIModelV2(nn.Module):
         # TODO: future remove
         if isinstance(in_channels, int):
             in_channels = [5, 1]
-        
+
         super().__init__()
         self.model_sagt2 = SplitROIFeatures(
             base_model,
@@ -177,6 +233,61 @@ class SpinalROIModelV3(nn.Module):
         return self.classifier(torch.cat((x_sagt2, x_axi, level), dim=1))
 
 
+class SpinalROIModelV4(nn.Module):
+    def __init__(
+        self,
+        base_model,
+        num_classes,
+        in_channels=None,
+        pretrained=True,
+        rnn_hidden_size=512,
+        rnn_num_layers=2,
+        rnn_dropout=0,
+        rnn_bidirectional=False,
+    ):
+        super().__init__()
+        self.in_channels = in_channels
+        self.model = timm.create_model(
+            model_name=base_model,
+            pretrained=pretrained,
+            in_chans=self.in_channels,
+        )
+        self.feature_num = self.model.num_features
+        self.global_pool_2d = nn.AdaptiveAvgPool2d((1, 1))
+        self.global_pool_1d = nn.AdaptiveAvgPool1d(1)
+        self.rnn = nn.GRU(
+            input_size=self.feature_num + 5,
+            hidden_size=rnn_hidden_size,
+            num_layers=rnn_num_layers,
+            dropout=rnn_dropout,
+            bidirectional=rnn_bidirectional,
+            batch_first=True,
+        )
+        if rnn_bidirectional:
+            fc_in_size = rnn_hidden_size * 2
+        else:
+            fc_in_size = rnn_hidden_size
+        self.classifier = nn.Linear(fc_in_size, num_classes)
+
+    def forward(self, x, level):
+        x_subset_list = []
+        start_size = self.in_channels // 2
+        end_size = self.in_channels - start_size
+        for i in range(start_size, x.shape[1] - end_size + 1):
+            x_subset = x[:, i - start_size : i + end_size, :, :]
+            x_subset = self.model.forward_features(x_subset)
+            x_subset = self.global_pool_2d(x_subset).flatten(start_dim=1)
+            x_subset_list.append(torch.cat((x_subset, level), dim=1))
+        x_split = torch.stack(x_subset_list, dim=1)
+
+        # RNN
+        x_split, _ = self.rnn(x_split)
+        x_split = x_split.permute(0, 2, 1)
+        x_split = self.global_pool_1d(x_split).squeeze()
+
+        return self.classifier(x_split)
+    
+    
 class ForaminalROIModel(nn.Module):
     def __init__(self, base_model, num_classes, in_channels=None, pretrained=True):
         super().__init__()
@@ -260,7 +371,6 @@ class ForaminalROIModelV3(nn.Module):
         self.classifier = nn.Linear(fc_in_size, num_classes)
 
     def forward(self, x, level, side):
-        # Extract 3-channel subsets
         x_subset_list = []
         start_size = self.in_channels // 2
         end_size = self.in_channels - start_size
@@ -278,6 +388,62 @@ class ForaminalROIModelV3(nn.Module):
 
         return self.classifier(x_split)
     
+    
+class ForaminalROIModelV4(nn.Module):
+
+    def __init__(
+        self,
+        base_model,
+        num_classes,
+        in_channels=None,
+        pretrained=True,
+        rnn_hidden_size=512,
+        rnn_num_layers=2,
+        rnn_dropout=0,
+        rnn_bidirectional=False,
+    ):
+        super().__init__()
+        self.in_channels = in_channels
+        self.model = timm.create_model(
+            model_name=base_model,
+            pretrained=pretrained,
+            in_chans=self.in_channels,
+        )
+        self.feature_num = self.model.num_features
+        self.global_pool_2d = nn.AdaptiveAvgPool2d((1, 1))
+        self.global_pool_1d = nn.AdaptiveAvgPool1d(1)
+        self.rnn = nn.GRU(
+            input_size=self.feature_num + 5,
+            hidden_size=rnn_hidden_size,
+            num_layers=rnn_num_layers,
+            dropout=rnn_dropout,
+            bidirectional=rnn_bidirectional,
+            batch_first=True,
+        )
+        if rnn_bidirectional:
+            fc_in_size = rnn_hidden_size * 2
+        else:
+            fc_in_size = rnn_hidden_size
+        self.classifier = nn.Linear(fc_in_size, num_classes)
+
+    def forward(self, x, level, side):
+        x_subset_list = []
+        start_size = self.in_channels // 2
+        end_size = self.in_channels - start_size
+        for i in range(start_size, x.shape[1] - end_size + 1):
+            x_subset = x[:, i - start_size : i + end_size, :, :]
+            x_subset = self.model.forward_features(x_subset)
+            x_subset = self.global_pool_2d(x_subset).flatten(start_dim=1)
+            x_subset_list.append(torch.cat((x_subset, level), dim=1))
+        x_split = torch.stack(x_subset_list, dim=1)
+
+        # RNN
+        x_split, _ = self.rnn(x_split)
+        x_split = x_split.permute(0, 2, 1)
+        x_split = self.global_pool_1d(x_split).squeeze()
+
+        return self.classifier(x_split)
+
 
 # from monai.networks.nets.resnet import resnet18
 # class ForaminalROIModelV4(nn.Module):
@@ -308,16 +474,15 @@ class ForaminalROIModelV3(nn.Module):
 class SubarticularROIModel(nn.Module):
     def __init__(self, base_model, num_classes, in_channels=None, pretrained=True):
         super().__init__()
-        self.model_sagt2 = timm.create_model(
+        self.model = timm.create_model(
             model_name=base_model,
             pretrained=pretrained,
             num_classes=num_classes,
             in_chans=in_channels,
         )
 
-    def forward(self, x_sagt2, level, side):
-        x_sagt2 = self.model_sagt2(x_sagt2)
-        return x_sagt2
+    def forward(self, x, level, side):
+        return self.model(x)
 
 
 class SubarticularROIModelV2(nn.Module):
@@ -334,50 +499,21 @@ class SubarticularROIModelV2(nn.Module):
         rnn_bidirectional=False,
     ):
         super().__init__()
-        self.in_channels = in_channels
-        self.model = timm.create_model(
-            model_name=base_model,
+        self.model = SplitROIFeatures(
+            base_model,
+            num_classes,
+            in_channels=in_channels,
             pretrained=pretrained,
-            in_chans=self.in_channels,
+            rnn_hidden_size=rnn_hidden_size,
+            rnn_num_layers=rnn_num_layers,
+            rnn_dropout=rnn_dropout,
+            rnn_bidirectional=rnn_bidirectional,
         )
-        self.feature_num = self.model.num_features
-        self.global_pool_2d = nn.AdaptiveAvgPool2d((1, 1))
-        self.global_pool_1d = nn.AdaptiveAvgPool1d(1)
-        self.rnn = nn.GRU(
-            input_size=self.feature_num,
-            hidden_size=rnn_hidden_size,
-            num_layers=rnn_num_layers,
-            dropout=rnn_dropout,
-            bidirectional=rnn_bidirectional,
-            batch_first=True,
-        )
-        if rnn_bidirectional:
-            fc_in_size = rnn_hidden_size * 2
-        else:
-            fc_in_size = rnn_hidden_size
-        self.classifier = nn.Linear(fc_in_size, num_classes)
+        self.classifier = nn.Linear(rnn_hidden_size, num_classes)
 
     def forward(self, x, level, side):
-        # Extract 3-channel subsets
-        x_subset_list = []
-        start_size = self.in_channels // 2
-        end_size = self.in_channels - start_size
-        for i in range(start_size, x.shape[1] - end_size + 1):
-            x_subset = x[:, i - start_size : i + end_size, :, :]
-            x_subset = self.model.forward_features(x_subset)
-            x_subset = self.global_pool_2d(x_subset).flatten(start_dim=1)
-            x_subset_list.append(x_subset)
-        x_split = torch.stack(x_subset_list, dim=1)
-
-        # RNN
-        x_split, _ = self.rnn(x_split)
-        x_split = x_split.permute(0, 2, 1)
-        x_split = self.global_pool_1d(x_split).squeeze()
-
-        if x_split.dim() == 1:
-            x_split = x_split.unsqueeze(0)
-
-        return self.classifier(x_split)
+        x = self.model(x)
+        return self.classifier(x)
 
 
 class SubarticularROIModelV3(nn.Module):
@@ -395,7 +531,7 @@ class SubarticularROIModelV3(nn.Module):
         # TODO: future remove
         if isinstance(in_channels, int):
             in_channels = [1, 1]
-        
+
         super().__init__()
         self.model_sagt2 = SplitROIFeatures(
             base_model,
@@ -423,3 +559,114 @@ class SubarticularROIModelV3(nn.Module):
         x_axi = self.model_axi(x_axi)
         x_sagt2 = self.model_sagt2(x_sagt2)
         return self.classifier(torch.cat((x_axi, x_sagt2), dim=1))
+    
+
+class SubarticularROIModelV4(nn.Module):
+    def __init__(
+        self,
+        base_model,
+        num_classes,
+        in_channels=None,
+        pretrained=True,
+        rnn_hidden_size=512,
+        rnn_num_layers=2,
+        rnn_dropout=0,
+        rnn_bidirectional=False,
+    ):
+        super().__init__()
+        self.in_channels = in_channels
+        self.model = timm.create_model(
+            model_name=base_model,
+            pretrained=pretrained,
+            in_chans=self.in_channels,
+        )
+        self.feature_num = self.model.num_features
+        self.global_pool_2d = nn.AdaptiveAvgPool2d((1, 1))
+        self.global_pool_1d = nn.AdaptiveAvgPool1d(1)
+        self.rnn = nn.GRU(
+            input_size=self.feature_num + 5,
+            hidden_size=rnn_hidden_size,
+            num_layers=rnn_num_layers,
+            dropout=rnn_dropout,
+            bidirectional=rnn_bidirectional,
+            batch_first=True,
+        )
+        if rnn_bidirectional:
+            fc_in_size = rnn_hidden_size * 2
+        else:
+            fc_in_size = rnn_hidden_size
+        self.classifier = nn.Linear(fc_in_size, num_classes)
+
+    def forward(self, x, level, side):
+        x_subset_list = []
+        start_size = self.in_channels // 2
+        end_size = self.in_channels - start_size
+        for i in range(start_size, x.shape[1] - end_size + 1):
+            x_subset = x[:, i - start_size : i + end_size, :, :]
+            x_subset = self.model.forward_features(x_subset)
+            x_subset = self.global_pool_2d(x_subset).flatten(start_dim=1)
+            x_subset_list.append(torch.cat((x_subset, level), dim=1))
+        x_split = torch.stack(x_subset_list, dim=1)
+
+        # RNN
+        x_split, _ = self.rnn(x_split)
+        x_split = x_split.permute(0, 2, 1)
+        x_split = self.global_pool_1d(x_split).squeeze()
+
+        return self.classifier(x_split)
+
+
+class GlobalROIModel(nn.Module):
+    def __init__(
+        self,
+        base_model,
+        num_classes,
+        in_channels=None,
+        pretrained=True,
+        rnn_hidden_size=512,
+        rnn_num_layers=2,
+        rnn_dropout=0,
+        rnn_bidirectional=False,
+    ):
+
+        super().__init__()
+        self.model_sagt2 = SplitROIFeatures(
+            base_model,
+            num_classes,
+            in_channels=in_channels[0],
+            pretrained=pretrained,
+            rnn_hidden_size=rnn_hidden_size,
+            rnn_num_layers=rnn_num_layers,
+            rnn_dropout=rnn_dropout,
+            rnn_bidirectional=rnn_bidirectional,
+        )
+        self.model_sagt1 = SplitROIFeatures(
+            base_model,
+            num_classes,
+            in_channels=in_channels[1],
+            pretrained=pretrained,
+            rnn_hidden_size=rnn_hidden_size,
+            rnn_num_layers=rnn_num_layers,
+            rnn_dropout=rnn_dropout,
+            rnn_bidirectional=rnn_bidirectional,
+        )
+        self.model_axi = SplitROIFeatures(
+            base_model,
+            num_classes,
+            in_channels=in_channels[2],
+            pretrained=pretrained,
+            rnn_hidden_size=rnn_hidden_size,
+            rnn_num_layers=rnn_num_layers,
+            rnn_dropout=rnn_dropout,
+            rnn_bidirectional=rnn_bidirectional,
+        )
+        self.classifier = nn.Linear(5 * rnn_hidden_size, num_classes)
+
+    def forward(self, x_sagt2, x_sagt1_left, x_sagt1_right, x_axi_left, x_axi_right, level):
+        x_sagt2 = self.model_sagt2(x_sagt2)
+        x_sagt1_left = self.model_sagt1(x_sagt1_left)
+        x_sagt1_right = self.model_sagt1(x_sagt1_right)
+        x_axi_left = self.model_axi(x_axi_left)
+        x_axi_right = self.model_axi(x_axi_right)
+        features = torch.cat((x_sagt2, x_sagt1_left, x_sagt1_right, x_axi_left, x_axi_right), dim=1)
+        return self.classifier(features)
