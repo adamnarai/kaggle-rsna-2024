@@ -95,7 +95,7 @@ class RunnerBase:
         self.model_dir = os.path.join(self.cfg['root'], 'models', model_name)
         os.makedirs(self.model_dir, exist_ok=True)
         
-    def get_dataloader(self, df, phase, df_coordinates=None):
+    def get_dataloader(self, df, phase, df_coordinates=None, transform=None):
         if phase in ['valid', 'predict', 'test', 'faketest', 'valid_check']:
             transform_name = 'valid_transform'
             data_loader_phase = 'valid'
@@ -103,7 +103,8 @@ class RunnerBase:
             transform_name = f'{phase}_transform'
             data_loader_phase = phase
         
-        transform = self.get_instance(module_aug, transform_name, self.cfg).get_transform()
+        if transform is None:
+            transform = self.get_instance(module_aug, transform_name, self.cfg).get_transform()
         dataset = self.get_instance(module_data, 'dataset', self.cfg, df, root_dir=self.root_dir, df_coordinates=df_coordinates, phase=phase, transform=transform)
         return self.get_instance(module_data, 'data_loader', self.cfg, dataset, data_loader_phase)
 
@@ -135,10 +136,10 @@ class RunnerBase:
 
         return valid_loss, metrics
     
-    def get_predictions(self, df, state_filename, df_coordinates=None):
+    def get_predictions(self, df, state_filename, df_coordinates=None, transform=None):
         model = self.get_instance(module_model, 'model', self.cfg).to(self.device)
         
-        valid_loader = self.get_dataloader(df, phase='predict', df_coordinates=df_coordinates)
+        valid_loader = self.get_dataloader(df, phase='predict', df_coordinates=df_coordinates, transform=transform)
 
         # Training
         trainer = Trainer(model, None, valid_loader, self.loss_fn, device=self.device, metrics=self.cfg['trainer']['metrics'])
@@ -224,7 +225,7 @@ class Runner(RunnerBase):
                 break
         return metric_list
     
-    def predict(self, state_type='best', oof=True, df_coordinates=None):
+    def predict(self, state_type='best', oof=True, df_coordinates=None, transform=None):
         self.model_dir = os.path.join(self.cfg['root'], 'models', self.model_name)
 
         self.seed_everything()
@@ -242,10 +243,10 @@ class Runner(RunnerBase):
                 raise ValueError('state_type must be "best" or "last"')
             state_filename = os.path.join(self.model_dir, f'{self.model_name}-cv{cv+1}{state_filename_suffix}.pt')
             if oof:
-                pred, y = self.get_predictions(df_valid, state_filename, df_coordinates=df_coordinates)
+                pred, y = self.get_predictions(df_valid, state_filename, df_coordinates=df_coordinates, transform=transform)
                 data = pd.concat([data, df_valid])
             else:
-                pred, y = self.get_predictions(df_train, state_filename, df_coordinates=df_coordinates)
+                pred, y = self.get_predictions(df_train, state_filename, df_coordinates=df_coordinates, transform=transform)
                 data = pd.concat([data, df_train])
             preds.append(pred)
             ys.append(y)
