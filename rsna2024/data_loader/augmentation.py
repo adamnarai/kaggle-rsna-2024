@@ -62,7 +62,43 @@ class CombinedV1(TransformFactory):
                 ToTensorV2(),
             ]
         )
-        
+
+
+class CombinedV1Multiple(TransformFactory):
+    def __init__(self, scale, translate_percent, rotate, shear, channel_shuffle_p, p):
+        self.aug = []
+        for i, _ in enumerate(scale):
+            self.aug.append(
+                A.Compose(
+                    [
+                        A.OneOf([A.Sharpen(p=0.5), A.MotionBlur(p=0.5)], p=0.5),
+                        A.ChannelShuffle(p=channel_shuffle_p[i]),
+                        A.Affine(
+                            scale=scale[i],
+                            translate_percent=translate_percent[i],
+                            rotate=rotate[i],
+                            shear=shear[i],
+                            p=p[i],
+                        ),
+                        ToTensorV2(),
+                    ]
+                )
+            )
+
+
+class NoAugMultiple(TransformFactory):
+    def __init__(self, dummy):
+        self.aug = []
+        for i, _ in enumerate(dummy):
+            self.aug.append(
+                A.Compose(
+                    [
+                        ToTensorV2(),
+                    ]
+                )
+            )
+
+
 def ch_revert(image, **kwargs):
     return image[..., ::-1]
 
