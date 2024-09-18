@@ -39,7 +39,6 @@ class SplitROIFeatures(nn.Module):
     def __init__(
         self,
         base_model,
-        num_classes=None,
         in_channels=None,
         pretrained=True,
         rnn_hidden_size=512,
@@ -53,9 +52,9 @@ class SplitROIFeatures(nn.Module):
             model_name=base_model,
             pretrained=pretrained,
             in_chans=self.in_channels,
+            num_classes=0,
         )
         self.feature_num = self.model.num_features
-        self.global_pool_2d = nn.AdaptiveAvgPool2d((1, 1))
         self.global_pool_1d = nn.AdaptiveAvgPool1d(1)
         self.rnn = nn.GRU(
             input_size=self.feature_num,
@@ -65,14 +64,6 @@ class SplitROIFeatures(nn.Module):
             bidirectional=rnn_bidirectional,
             batch_first=True,
         )
-        if rnn_bidirectional:
-            fc_in_size = rnn_hidden_size * 2
-        else:
-            fc_in_size = rnn_hidden_size
-
-        # TODO future remove
-        if num_classes is not None:
-            self.classifier = nn.Linear(fc_in_size + 5, num_classes)
 
     def forward(self, x):
         x_subset_list = []
@@ -80,8 +71,7 @@ class SplitROIFeatures(nn.Module):
         end_size = self.in_channels - start_size
         for i in range(start_size, x.shape[1] - end_size + 1):
             x_subset = x[:, i - start_size : i + end_size, :, :]
-            x_subset = self.model.forward_features(x_subset)
-            x_subset = self.global_pool_2d(x_subset).flatten(start_dim=1)
+            x_subset = self.model(x_subset)
             x_subset_list.append(x_subset)
         x_split = torch.stack(x_subset_list, dim=1)
 
@@ -93,6 +83,10 @@ class SplitROIFeatures(nn.Module):
             x_split = x_split.unsqueeze(0)
 
         return x_split
+
+
+class SplitROIFeaturesV2(SplitROIFeatures):
+    pass
 
 
 class SpinalROIModel(nn.Module):
@@ -107,14 +101,10 @@ class SpinalROIModel(nn.Module):
         rnn_dropout=0,
         rnn_bidirectional=False,
     ):
-        # TODO: future remove
-        if isinstance(in_channels, int):
-            in_channels = [5, 1]
 
         super().__init__()
         self.model_sagt2 = SplitROIFeatures(
             base_model,
-            num_classes,
             in_channels=in_channels[0],
             pretrained=pretrained,
             rnn_hidden_size=rnn_hidden_size,
@@ -124,7 +114,6 @@ class SpinalROIModel(nn.Module):
         )
         self.model_axi = SplitROIFeatures(
             base_model,
-            num_classes,
             in_channels=in_channels[1],
             pretrained=pretrained,
             rnn_hidden_size=rnn_hidden_size,
@@ -132,7 +121,11 @@ class SpinalROIModel(nn.Module):
             rnn_dropout=rnn_dropout,
             rnn_bidirectional=rnn_bidirectional,
         )
-        self.classifier = nn.Linear(2 * rnn_hidden_size, num_classes)
+        if rnn_bidirectional:
+            fc_in_size = rnn_hidden_size * 2
+        else:
+            fc_in_size = rnn_hidden_size
+        self.classifier = nn.Linear(2 * fc_in_size, num_classes)
 
     def forward(self, x_sagt2, x_axi, level):
         x_sagt2 = self.model_sagt2(x_sagt2)
@@ -162,7 +155,11 @@ class ForaminalROIModel(nn.Module):
             rnn_dropout=rnn_dropout,
             rnn_bidirectional=rnn_bidirectional,
         )
-        self.classifier = nn.Linear(rnn_hidden_size, num_classes)
+        if rnn_bidirectional:
+            fc_in_size = rnn_hidden_size * 2
+        else:
+            fc_in_size = rnn_hidden_size
+        self.classifier = nn.Linear(fc_in_size, num_classes)
 
     def forward(self, x, level, side):
         x = self.model(x)
@@ -214,7 +211,11 @@ class GlobalROIModel(nn.Module):
             rnn_dropout=rnn_dropout,
             rnn_bidirectional=rnn_bidirectional,
         )
-        self.classifier = nn.Linear(5 * rnn_hidden_size, num_classes)
+        if rnn_bidirectional:
+            fc_in_size = rnn_hidden_size * 2
+        else:
+            fc_in_size = rnn_hidden_size
+        self.classifier = nn.Linear(5 * fc_in_size, num_classes)
 
     def forward(self, x_sagt2, x_sagt1_left, x_sagt1_right, x_axi_left, x_axi_right, level):
         x_sagt2 = self.model_sagt2(x_sagt2)
@@ -224,44 +225,3 @@ class GlobalROIModel(nn.Module):
         x_axi_right = self.model_axi(x_axi_right)
         features = torch.cat((x_sagt2, x_sagt1_left, x_sagt1_right, x_axi_left, x_axi_right), dim=1)
         return self.classifier(features)
-
-
-class SpinalROIModelV2(SpinalROIModel):
-    # TODO: future remove
-    pass
-
-
-class ForaminalROIModelV3(ForaminalROIModel):
-    # TODO: future remove
-    pass
-
-
-class SubarticularROIModelV2(SubarticularROIModel):
-    # TODO: future remove
-    pass
-
-
-# from monai.networks.nets.resnet import resnet18
-# class ForaminalROIModelV4(nn.Module):
-
-#     def __init__(
-#         self,
-#         base_model,
-#         num_classes,
-#         in_channels=None,
-#         pretrained=True,
-#     ):
-#         super().__init__()
-#         self.in_channels = in_channels
-#         self.model = timm.create_model(
-#             model_name=base_model,
-#             pretrained=pretrained,
-#             in_chans=self.in_channels,
-#         )
-#         self.model = resnet18(pretrained=True, n_input_channels=1, feed_forward=False, shortcut_type='A')
-#         self.classifier = nn.Linear(512, num_classes)
-
-#     def forward(self, x, level, side):
-#         x = x.unsqueeze(1)
-#         x = self.model(x)
-#         return self.classifier(x)
