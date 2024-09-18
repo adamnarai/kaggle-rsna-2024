@@ -14,7 +14,7 @@ from torch.utils.data import Dataset
 from rsna2024.utils import natural_sort
 
 
-class CoordDataset(Dataset):
+class DatasetBase(Dataset):
     def __init__(
         self,
         df,
@@ -22,10 +22,14 @@ class CoordDataset(Dataset):
         data_dir,
         img_num,
         resolution,
-        heatmap_std,
         phase='train',
         df_coordinates=None,
         cleaning_rule=None,
+        coord_impute_file=None,
+        resample_slice_spacing=None,
+        interpolation='INTER_CUBIC',
+        standardize=True,
+        rand_instance_number_offsets=None,
         transform=None,
     ):
         self.phase = phase
@@ -41,6 +45,7 @@ class CoordDataset(Dataset):
         self.df = df
         self.data_dir = os.path.join(root_dir, data_dir)
         self.df_series = self.load_series_info()
+        self.coord_impute_file = coord_impute_file
         if df_coordinates is None and self.phase != 'test':
             self.df_coordinates = self.load_coordinates_info()
         else:
@@ -53,8 +58,11 @@ class CoordDataset(Dataset):
         self.transform = transform
         self.img_num = img_num
         self.resolution = resolution
-        self.heatmap_std = heatmap_std
         self.cleaning_rule = cleaning_rule
+        self.resample_slice_spacing = resample_slice_spacing
+        self.interpolation = interpolation
+        self.standardize = standardize
+        self.rand_instance_number_offsets = rand_instance_number_offsets
 
         self.levels = ['l1_l2', 'l2_l3', 'l3_l4', 'l4_l5', 'l5_s1']
         self.sides = ['left', 'right']
@@ -64,6 +72,9 @@ class CoordDataset(Dataset):
         self.handler = logging.FileHandler('level_roi_dataset.log')
         self.logger.addHandler(self.handler)
 
+    def __len__(self):
+        return len(self.df)
+
     def load_series_info(self):
         return pd.read_csv(
             os.path.join(self.data_dir, self.series_filename),
@@ -71,13 +82,100 @@ class CoordDataset(Dataset):
         )
 
     def load_coordinates_info(self):
-        return pd.read_csv(
+        df_coordinates = pd.read_csv(
             os.path.join(self.data_dir, '..', 'processed', 'train_label_coordinates.csv'),
             dtype={'study_id': 'str', 'series_id': 'str'},
         )
+        if self.coord_impute_file is not None:
+            df_coordinates_pred = pd.read_csv(
+                os.path.join(self.data_dir, '..', 'processed', self.coord_impute_file + '.csv'),
+                dtype={'study_id': 'str', 'series_id': 'str'},
+            )
+            bad_coordinates = pd.read_csv(
+                os.path.join(
+                    self.data_dir, '..', 'processed', 'bad_coords_spinal_canal_stenosis.csv'
+                ),
+                dtype={'study_id': 'str', 'series_id': 'str'},
+            )
 
-    def __len__(self):
-        return len(self.df)
+            # Remove bad coords
+            df_coordinates.set_index(['study_id', 'series_id', 'row_id'], inplace=True)
+            bad_coordinates.set_index(['study_id', 'series_id', 'row_id'], inplace=True)
+            df_coordinates = df_coordinates.drop(
+                df_coordinates.index.intersection(bad_coordinates.index)
+            ).reset_index()
+
+            # Impute with predicted coords
+            df_coordinates.set_index(['study_id', 'row_id'], inplace=True)
+            df_coordinates_pred.set_index(['study_id', 'row_id'], inplace=True)
+            df_coordinates = pd.concat(
+                [
+                    df_coordinates,
+                    df_coordinates_pred.drop(df_coordinates.index).dropna(subset='series_id'),
+                ],
+                axis=0,
+            ).reset_index()
+
+        return df_coordinates
+
+    def get_series(self, study_id, series_description):
+        series_list = self.df_series[
+            (self.df_series['study_id'] == study_id)
+            & (self.df_series['series_description'] == series_description)
+        ]['series_id'].tolist()
+
+        # Try to substitute T1 for T2 or vice versa
+        if len(series_list) == 0:
+            if series_description == 'Sagittal T2/STIR':
+                series_description = 'Sagittal T1'
+            elif series_description == 'Sagittal T1':
+                series_description = 'Sagittal T2/STIR'
+            series_list = self.df_series[
+                (self.df_series['study_id'] == study_id)
+                & (self.df_series['series_description'] == series_description)
+            ]['series_id'].tolist()
+
+        if len(series_list) == 0:
+            self.logger.warning('%s %s not found', study_id, series_description)
+            return None
+
+        if len(series_list) > 1:
+            self.logger.warning('%s %s multiple found', study_id, series_description)
+
+        return series_list
+
+    def __getitem__(self, idx):
+        raise NotImplementedError('Please implement this method in a subclass')
+
+
+class CoordDataset(DatasetBase):
+    def __init__(
+        self,
+        df,
+        root_dir,
+        data_dir,
+        img_num,
+        resolution,
+        heatmap_std,
+        phase='train',
+        df_coordinates=None,
+        coord_impute_file=None,
+        cleaning_rule=None,
+        transform=None,
+    ):
+        super().__init__(
+            df=df,
+            root_dir=root_dir,
+            data_dir=data_dir,
+            img_num=img_num,
+            resolution=resolution,
+            phase=phase,
+            df_coordinates=df_coordinates,
+            cleaning_rule=cleaning_rule,
+            coord_impute_file=coord_impute_file,
+            transform=transform,
+        )
+        self.heatmap_std = heatmap_std
 
     def gaussian_heatmap(self, width, height, center, std_dev):
         """
@@ -108,7 +206,7 @@ class CoordDataset(Dataset):
         return torch.stack(heatmaps, dim=-1).numpy()
 
     def most_frequent(self, l):
-        l = [l_ for l_ in l if not (isinstance(l_, float) and np.isnan(l_))]
+        l = [l_ for l_ in l if not pd.isnull(l_)]
         if len(l) == 0:
             return None
         return max(l, key=l.count)
@@ -137,7 +235,7 @@ class CoordDataset(Dataset):
         series_list = series_coords['series_id'].unique().tolist()
         series_id = self.most_frequent(series_list)
 
-        if series_id is None:
+        if pd.isnull(series_id):
             instance_number = np.nan
         else:
             instance_number = self.most_frequent(
@@ -145,58 +243,26 @@ class CoordDataset(Dataset):
                     'instance_number'
                 ].values.tolist()
             )
-            if instance_number is None:
+            if pd.isnull(instance_number):
                 instance_number = np.nan
 
-        if len(series_list) == 0:
-            self.logger.warning('%s %s not found', study_id, series_description)
-            return None
-
-        if len(series_list) > 1:
-            self.logger.warning('%s %s multiple found', study_id, series_description)
-
         return series_id, coords, instance_number
-
-    def get_series(self, study_id, series_description):
-        series_list = self.df_series[
-            (self.df_series['study_id'] == study_id)
-            & (self.df_series['series_description'] == series_description)
-        ]['series_id'].tolist()
-
-        # Try to substitute T1 for T2 or vice versa
-        if len(series_list) == 0:
-            if series_description == 'Sagittal T2/STIR':
-                series_description = 'Sagittal T1'
-            elif series_description == 'Sagittal T1':
-                series_description = 'Sagittal T2/STIR'
-            series_list = self.df_series[
-                (self.df_series['study_id'] == study_id)
-                & (self.df_series['series_description'] == series_description)
-            ]['series_id'].tolist()
-
-        if len(series_list) == 0:
-            self.logger.warning('%s %s not found', study_id, series_description)
-            return None
-
-        if len(series_list) > 1:
-            self.logger.warning('%s %s multiple found', study_id, series_description)
-
-        return series_list
 
     def get_image(
         self,
         study_id,
         series_id,
-        instance_number_type='middle',  # 'middle' 'index', 'filename', 'relative'
+        instance_number_type='middle',
         instance_number=None,
         interpolation=cv2.INTER_CUBIC,
         standardize=True,
     ):
+        # Zero image
         x = np.zeros((self.resolution, self.resolution, self.img_num), dtype=np.float32)
-        if series_id is None:
+        if pd.isnull(series_id) or (instance_number_type != 'middle' and pd.isnull(instance_number)):
             return x
-        if instance_number_type != 'middle' and pd.isnull(instance_number):
-            return x
+        
+        # Get all dcm files in series
         series_dir = os.path.join(self.img_dir, str(study_id), str(series_id))
         file_list = natural_sort(os.listdir(series_dir))
         slice_num = len(file_list)
@@ -231,7 +297,7 @@ class CoordDataset(Dataset):
                         - self.img_num / 2
                     )
                 )
-            except:
+            except Exception as e:
                 start_index = (slice_num - self.img_num) // 2
         elif instance_number_type == 'centered_mm_old':
             try:
@@ -240,8 +306,13 @@ class CoordDataset(Dataset):
                     + round(instance_number / float(ds_first.SpacingBetweenSlices))
                     - self.img_num // 2
                 )
-            except:
+            except Exception as e:
                 start_index = slice_num // 2 - self.img_num // 2
+                
+                # Augment instance number during training
+        if self.rand_instance_number_offsets is not None and self.phase in ['train']:
+            start_index += random.sample(self.rand_instance_number_offsets, 1)[0]
+        
         start_index = min(max(start_index, 0), slice_num)
         end_index = min(start_index + self.img_num, slice_num)
         file_list = file_list[start_index:end_index]
@@ -259,9 +330,6 @@ class CoordDataset(Dataset):
             x = (x - x.mean()) / x.std()
 
         return x
-
-    def __getitem__(self, idx):
-        raise NotImplementedError('Please implement this method in a subclass')
 
 
 class Sagt2CoordDataset(CoordDataset):
@@ -395,9 +463,6 @@ class Sagt1CoordDataset(CoordDataset):
             return img, heatmaps
 
         elif self.phase in ['test']:
-            series_id = self.get_series(row.study_id, 'Sagittal T1')
-            if series_id is not None:
-                series_id = series_id[0]  # get the first series_id
 
             if self.transform:
                 img = self.transform(image=img)['image']
@@ -475,7 +540,7 @@ class AxiCoordDataset(CoordDataset):
             return img, row.study_id, series_id, row.level
 
 
-class ROIDataset(Dataset):
+class ROIDataset(DatasetBase):
     def __init__(
         self,
         df,
@@ -487,37 +552,26 @@ class ROIDataset(Dataset):
         phase='train',
         df_coordinates=None,
         cleaning_rule=None,
-        coord_inpute_file=None,
+        coord_impute_file=None,
         resample_slice_spacing=None,
         interpolation='INTER_CUBIC',
         standardize=True,
         rand_instance_number_offsets=None,
         transform=None,
     ):
-        self.phase = phase
-        if self.phase in ['train', 'valid', 'predict', 'faketest', 'valid_check']:
-            self.img_subdir = 'train_images'
-            self.series_filename = 'train_series_descriptions.csv'
-        elif self.phase == 'test':
-            self.img_subdir = 'test_images'
-            self.series_filename = 'test_series_descriptions.csv'
-        if self.phase == 'faketest':
-            self.phase = 'test'
-
-        self.df = df
-        self.data_dir = os.path.join(root_dir, data_dir)
-        self.df_series = self.load_series_info()
-        self.coord_inpute_file = coord_inpute_file
-        if df_coordinates is None and self.phase != 'test':
-            self.df_coordinates = self.load_coordinates_info()
-        else:
-            self.df_coordinates = df_coordinates
-        if self.df_coordinates is not None:
-            self.df_coordinates = self.df_coordinates.merge(
-                self.df_series, how='left', on=['study_id', 'series_id']
-            )
-        self.img_dir = os.path.join(self.data_dir, self.img_subdir)
-
+        super().__init__(
+            df=df,
+            root_dir=root_dir,
+            data_dir=data_dir,
+            img_num=img_num,
+            resolution=resolution,
+            phase=phase,
+            df_coordinates=df_coordinates,
+            cleaning_rule=cleaning_rule,
+            coord_impute_file=coord_impute_file,
+            transform=transform,
+        )
+            
         self.df_orig = df
         self.df = pd.wide_to_long(
             df,
@@ -533,105 +587,8 @@ class ROIDataset(Dataset):
             sep='_',
             suffix=r'\w+',
         ).reset_index()
-        self.transform = transform
-        self.img_num = img_num
-        self.resolution = resolution
         self.roi_size = roi_size
-        self.cleaning_rule = cleaning_rule
-        self.resample_slice_spacing = resample_slice_spacing
-        self.interpolation = interpolation
-        self.standardize = standardize
-        self.rand_instance_number_offsets = rand_instance_number_offsets
 
-        self.levels = ['l1_l2', 'l2_l3', 'l3_l4', 'l4_l5', 'l5_s1']
-        self.sides = ['left', 'right']
-
-        self.logger = logging.getLogger(__name__)
-        self.logger.setLevel(logging.ERROR)
-        self.handler = logging.FileHandler('level_roi_dataset.log')
-        self.logger.addHandler(self.handler)
-
-    def load_series_info(self):
-        return pd.read_csv(
-            os.path.join(self.data_dir, self.series_filename),
-            dtype={'study_id': 'str', 'series_id': 'str'},
-        )
-
-    def load_coordinates_info(self):
-        df_coordinates = pd.read_csv(
-            os.path.join(self.data_dir, '..', 'processed', 'train_label_coordinates.csv'),
-            dtype={'study_id': 'str', 'series_id': 'str'},
-        )
-        if self.coord_inpute_file is not None:
-            df_coordinates_pred = pd.read_csv(
-                os.path.join(self.data_dir, '..', 'processed', self.coord_inpute_file + '.csv'),
-                dtype={'study_id': 'str', 'series_id': 'str'},
-            )
-            bad_coordinates = pd.read_csv(
-                os.path.join(
-                    self.data_dir, '..', 'processed', 'bad_coords_spinal_canal_stenosis.csv'
-                ),
-                dtype={'study_id': 'str', 'series_id': 'str'},
-            )
-
-            # Remove bad coords
-            df_coordinates.set_index(['study_id', 'series_id', 'row_id'], inplace=True)
-            bad_coordinates.set_index(['study_id', 'series_id', 'row_id'], inplace=True)
-            df_coordinates = df_coordinates.drop(
-                df_coordinates.index.intersection(bad_coordinates.index)
-            ).reset_index()
-
-            # Inpute with predicted coords
-            df_coordinates.set_index(['study_id', 'row_id'], inplace=True)
-            df_coordinates_pred.set_index(['study_id', 'row_id'], inplace=True)
-            df_coordinates = pd.concat(
-                [
-                    df_coordinates,
-                    df_coordinates_pred.drop(df_coordinates.index).dropna(subset='series_id'),
-                ],
-                axis=0,
-            ).reset_index()
-
-        return df_coordinates
-
-    def __len__(self):
-        return len(self.df)
-
-    def get_series(self, study_id, series_description):
-        series_list = self.df_series[
-            (self.df_series['study_id'] == study_id)
-            & (self.df_series['series_description'] == series_description)
-        ]['series_id'].tolist()
-
-        # Try to substitute T1 for T2 or vice versa
-        if len(series_list) == 0:
-            if series_description == 'Sagittal T2/STIR':
-                series_description = 'Sagittal T1'
-            elif series_description == 'Sagittal T1':
-                series_description = 'Sagittal T2/STIR'
-            series_list = self.df_series[
-                (self.df_series['study_id'] == study_id)
-                & (self.df_series['series_description'] == series_description)
-            ]['series_id'].tolist()
-
-        if len(series_list) == 0:
-            self.logger.warning('%s %s not found', study_id, series_description)
-            return None
-
-        if len(series_list) > 1:
-            self.logger.warning('%s %s multiple found', study_id, series_description)
-
-        return series_list
-
-    def get_valid_fold_idx(self, model_dir, study_id):
-        splits = pd.read_csv(os.path.join(model_dir, 'splits.csv'), dtype={'study_id': 'str'})
-        fold_idx = (
-            splits[(splits['study_id'] == study_id) & (splits['split'] == 'validation')][
-                'fold'
-            ].values[0]
-            - 1
-        )
-        return fold_idx
 
     def get_sagt2_coord(self, study_id, level):
         coords = self.df_coordinates[
@@ -715,15 +672,16 @@ class ROIDataset(Dataset):
         roi_size,
         x_norm=np.nan,
         y_norm=np.nan,
-        instance_number_type='middle',  # 'middle' 'index', 'filename', 'relative'
+        instance_number_type='middle',
         instance_number=None,
         resample_slice_spacing=None,
     ):
+        # Zero image
         x = np.zeros((resolution, resolution, img_num), dtype=np.float32)
-        if series_id is None or np.isnan(x_norm) or np.isnan(y_norm):
+        if pd.isnull(series_id) or pd.isnull(x_norm) or pd.isnull(y_norm) or (instance_number_type != 'middle' and pd.isnull(instance_number)):
             return x
-        if instance_number_type != 'middle' and pd.isnull(instance_number):
-            return x
+        
+        # Get all dcm files in series
         series_dir = os.path.join(self.img_dir, str(study_id), str(series_id))
         file_list = natural_sort(os.listdir(series_dir))
         slice_num = len(file_list)
@@ -743,7 +701,7 @@ class ROIDataset(Dataset):
         if resample_slice_spacing is not None:
             try:
                 slice_spacing = float(ds_first.SpacingBetweenSlices)
-            except Exception:
+            except Exception as e:
                 slice_spacing = 4.5
             resample_factor = resample_slice_spacing / slice_spacing
             img_num_final = img_num
@@ -771,7 +729,7 @@ class ROIDataset(Dataset):
                         - img_num / 2
                     )
                 )
-            except Exception:
+            except Exception as e:
                 start_index = (slice_num - img_num) // 2
         elif instance_number_type == 'centered_mm_old':
             try:
@@ -780,7 +738,7 @@ class ROIDataset(Dataset):
                     + round(instance_number / float(ds_first.SpacingBetweenSlices))
                     - img_num // 2
                 )
-            except:
+            except Exception as e:
                 start_index = slice_num // 2 - img_num // 2
 
         # Augment instance number during training
@@ -824,9 +782,6 @@ class ROIDataset(Dataset):
             x = (x - x.mean()) / x.std()
 
         return x
-
-    def __getitem__(self, idx):
-        raise NotImplementedError('Please implement this method in a subclass')
 
 
 class SpinalROIDataset(ROIDataset):
@@ -942,9 +897,14 @@ class ForaminalROIDataset(ROIDataset):
         )
 
         instance_number_type = 'centered_mm'
-        instance_number = 16.8
-        if row.side == 'right':
-            instance_number = -1 * instance_number
+        level_instance_number = {
+            'l1_l2': 14.9,
+            'l2_l3': 15.7,
+            'l3_l4': 16.7,
+            'l4_l5': 17.8,
+            'l5_s1': 18.9,
+        }
+        instance_number = level_instance_number[row.level]
 
         sagt1_roi = self.get_roi(
             study_id=row.study_id,
@@ -1041,9 +1001,14 @@ class GlobalROIDataset(ROIDataset):
                 row.study_id, row.level, side
             )
 
-            sagt1_instance_number = 16.8
-            if side == 'right':
-                sagt1_instance_number = -1 * sagt1_instance_number
+            sagt1_level_instance_number = {
+                'l1_l2': 14.9,
+                'l2_l3': 15.7,
+                'l3_l4': 16.7,
+                'l4_l5': 17.8,
+                'l5_s1': 18.9,
+            }
+            sagt1_instance_number = sagt1_level_instance_number[row.level]
 
             sagt1_roi = self.get_roi(
                 study_id=row.study_id,
@@ -1062,7 +1027,7 @@ class GlobalROIDataset(ROIDataset):
             elif side == 'right':
                 sagt1_right_roi = sagt1_roi
 
-            # Axial T2 central ROI
+            # Axial T2 ROI
             axi_x_norm, axi_y_norm, axi_instance_number, axi_series_id = self.get_axi_coord(
                 row.study_id, row.level, side
             )
@@ -1116,13 +1081,3 @@ class GlobalROIDataset(ROIDataset):
             )
         elif self.phase in ['test']:
             return sagt2_roi, sagt1_left_roi, sagt1_right_roi, axi_left_roi, axi_right_roi, level, 0
-
-
-class SpinalROIDatasetV2(SpinalROIDataset):
-    # TODO: future remove
-    pass
-
-
-class ForaminalROIDatasetV2(ForaminalROIDataset):
-    # TODO: future remove
-    pass
