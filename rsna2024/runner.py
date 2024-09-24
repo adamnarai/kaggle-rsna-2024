@@ -136,7 +136,7 @@ class RunnerBase:
 
         return valid_loss, metrics
     
-    def get_predictions(self, df, state_filename, df_coordinates=None, transform=None):
+    def get_predictions(self, df, state_filename, df_coordinates=None, transform=None, id_var_num=0):
         model = self.get_instance(module_model, 'model', self.cfg).to(self.device)
         
         valid_loader = self.get_dataloader(df, phase='predict', df_coordinates=df_coordinates, transform=transform)
@@ -144,9 +144,9 @@ class RunnerBase:
         # Training
         trainer = Trainer(model, None, valid_loader, self.loss_fn, device=self.device, metrics=self.cfg['trainer']['metrics'])
         trainer.load_state(state_filename)
-        preds, ys = trainer.predict()
+        output = trainer.predict(id_var_num=id_var_num)
 
-        return preds, ys
+        return output
 
 
 class Runner(RunnerBase):
@@ -225,13 +225,15 @@ class Runner(RunnerBase):
                 break
         return metric_list
     
-    def predict(self, state_type='best', oof=True, df_coordinates=None, transform=None):
+    def predict(self, state_type='best', oof=True, df_coordinates=None, transform=None, id_var_num=0):
         self.model_dir = os.path.join(self.cfg['root'], 'models', self.model_name)
 
         self.seed_everything()
         splits = self.load_splits()
 
         preds, ys = [], []
+        if id_var_num > 0:
+            id_vars = [[] for _ in range(id_var_num)]
         data = pd.DataFrame()
         for cv, (df_train, df_valid) in enumerate(splits):
             print(f'Cross-validation fold {cv+1}/{self.cfg['trainer']['cv_fold']}')
@@ -243,15 +245,28 @@ class Runner(RunnerBase):
                 raise ValueError('state_type must be "best" or "last"')
             state_filename = os.path.join(self.model_dir, f'{self.model_name}-cv{cv+1}{state_filename_suffix}.pt')
             if oof:
-                pred, y = self.get_predictions(df_valid, state_filename, df_coordinates=df_coordinates, transform=transform)
+                output = self.get_predictions(df_valid, state_filename, df_coordinates=df_coordinates, transform=transform, id_var_num=id_var_num)
                 data = pd.concat([data, df_valid])
             else:
-                pred, y = self.get_predictions(df_train, state_filename, df_coordinates=df_coordinates, transform=transform)
+                output = self.get_predictions(df_train, state_filename, df_coordinates=df_coordinates, transform=transform, id_var_num=id_var_num)
                 data = pd.concat([data, df_train])
+            if id_var_num > 0:
+                id_var = output[-id_var_num:]
+                pred, y = output[:-id_var_num]
+            else:
+                pred, y = output
             preds.append(pred)
             ys.append(y)
+            if id_var_num > 0:
+                for i in range(id_var_num):
+                    id_vars[i].append(np.array(id_var[i]))
         preds = np.concatenate(preds)
         ys = np.concatenate(ys)
+        
+        if id_var_num > 0:
+            for i in range(id_var_num):
+                id_vars[i] = np.concatenate(id_vars[i])
+            return preds, ys, data, *id_vars
 
         return preds, ys, data
 

@@ -163,13 +163,18 @@ class Trainer:
 
         return valid_loss, metrics
 
-    def predict(self):
+    def predict(self, id_var_num=0):
         num_batches = len(self.valid_dataloader)
         self.model.eval()
 
         preds, ys = [], []
+        if id_var_num > 0:
+            id_vars = [[] for _ in range(id_var_num)]
         with torch.no_grad():
             for batch in tqdm(self.valid_dataloader, total=num_batches):
+                if id_var_num > 0:
+                    id_var = batch[-id_var_num:]
+                    batch = batch[:-id_var_num]
                 *X, y = batch
                 X = [x.to(self.device, non_blocking=True) for x in X]
                 y = y.to(self.device, non_blocking=True)
@@ -177,9 +182,15 @@ class Trainer:
                 pred = self.model(*X)
                 preds.append(pred)
                 ys.append(y)
+                if id_var_num > 0:
+                    for i in range(id_var_num):
+                        id_vars[i].append(np.array(id_var[i]))
         preds = torch.cat(preds, dim=0).to('cpu').numpy()
         ys = torch.cat(ys, dim=0).to('cpu').numpy()
-
+        if id_var_num > 0:
+            for i in range(id_var_num):
+                id_vars[i] = np.concatenate(id_vars[i])
+            return preds, ys, *id_vars
         return preds, ys
 
     def save_state(self, filename):
