@@ -159,8 +159,9 @@ class CoordDataset(DatasetBase):
         heatmap_std,
         phase='train',
         df_coordinates=None,
-        coord_impute_file=None,
         cleaning_rule=None,
+        coord_impute_file=None,
+        rand_instance_number_offsets=None,
         transform=None,
     ):
         super().__init__(
@@ -173,6 +174,7 @@ class CoordDataset(DatasetBase):
             df_coordinates=df_coordinates,
             cleaning_rule=cleaning_rule,
             coord_impute_file=coord_impute_file,
+            rand_instance_number_offsets=rand_instance_number_offsets,
             transform=transform,
         )
         self.heatmap_std = heatmap_std
@@ -309,7 +311,7 @@ class CoordDataset(DatasetBase):
             except Exception as e:
                 start_index = slice_num // 2 - self.img_num // 2
                 
-                # Augment instance number during training
+        # Augment instance number during training
         if self.rand_instance_number_offsets is not None and self.phase in ['train']:
             start_index += random.sample(self.rand_instance_number_offsets, 1)[0]
         
@@ -362,8 +364,8 @@ class Sagt2CoordDataset(CoordDataset):
                 img, heatmaps = t['image'], t['mask']
             heatmaps = np.transpose(heatmaps, (2, 0, 1))
 
-            if self.phase == 'valid_check':
-                if series_id is None:
+            if self.phase in ['predict', 'valid_check']:
+                if pd.isnull(series_id):
                     series_id = ''
                 return img, heatmaps, row.study_id, series_id
 
@@ -376,7 +378,7 @@ class Sagt2CoordDataset(CoordDataset):
             img = self.get_image(row.study_id, series_id, instance_number_type='middle')
             if self.transform:
                 img = self.transform(image=img)['image']
-            if series_id is None:
+            if pd.isnull(series_id):
                 series_id = ''
             return img, row.study_id, series_id
 
@@ -455,8 +457,8 @@ class Sagt1CoordDataset(CoordDataset):
                 img, heatmaps = t['image'], t['mask']
             heatmaps = np.transpose(heatmaps, (2, 0, 1))
 
-            if self.phase == 'valid_check':
-                if series_id is None:
+            if self.phase in ['predict', 'valid_check']:
+                if pd.isnull(series_id):
                     series_id = ''
                 return img, heatmaps, row.study_id, series_id, row.side
 
@@ -466,7 +468,7 @@ class Sagt1CoordDataset(CoordDataset):
 
             if self.transform:
                 img = self.transform(image=img)['image']
-            if series_id is None:
+            if pd.isnull(series_id):
                 series_id = ''
             return img, row.study_id, series_id, row.side
 
@@ -525,17 +527,17 @@ class AxiCoordDataset(CoordDataset):
                 img, heatmaps = t['image'], t['mask']
             heatmaps = np.transpose(heatmaps, (2, 0, 1))
 
-            if self.phase == 'valid_check':
-                if series_id is None:
+            if self.phase in ['predict', 'valid_check']:
+                if pd.isnull(series_id):
                     series_id = ''
-                return img, heatmaps, row.study_id, series_id
+                return img, heatmaps, row.study_id, series_id, row.level
 
             return img, heatmaps
 
         elif self.phase in ['test']:
             if self.transform:
                 img = self.transform(image=img)['image']
-            if series_id is None:
+            if pd.isnull(series_id):
                 series_id = ''
             return img, row.study_id, series_id, row.level
 
@@ -551,12 +553,12 @@ class ROIDataset(DatasetBase):
         roi_size,
         phase='train',
         df_coordinates=None,
-        cleaning_rule=None,
-        coord_impute_file=None,
-        resample_slice_spacing=None,
         interpolation='INTER_CUBIC',
         standardize=True,
+        cleaning_rule=None,
+        coord_impute_file=None,
         rand_instance_number_offsets=None,
+        resample_slice_spacing=None,
         transform=None,
     ):
         super().__init__(
@@ -569,6 +571,8 @@ class ROIDataset(DatasetBase):
             df_coordinates=df_coordinates,
             cleaning_rule=cleaning_rule,
             coord_impute_file=coord_impute_file,
+            rand_instance_number_offsets=rand_instance_number_offsets,
+            resample_slice_spacing=resample_slice_spacing,
             transform=transform,
         )
             
@@ -905,6 +909,8 @@ class ForaminalROIDataset(ROIDataset):
             'l5_s1': 18.9,
         }
         instance_number = level_instance_number[row.level]
+        if row.side == 'right':
+            instance_number = -1 * instance_number
 
         sagt1_roi = self.get_roi(
             study_id=row.study_id,
@@ -1009,6 +1015,8 @@ class GlobalROIDataset(ROIDataset):
                 'l5_s1': 18.9,
             }
             sagt1_instance_number = sagt1_level_instance_number[row.level]
+            if side == 'right':
+                sagt1_instance_number = -1 * sagt1_instance_number
 
             sagt1_roi = self.get_roi(
                 study_id=row.study_id,
