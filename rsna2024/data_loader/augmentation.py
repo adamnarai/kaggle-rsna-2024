@@ -66,6 +66,43 @@ class CombinedV1(TransformFactory):
         )
 
 
+class CombinedV2(TransformFactory):
+    def __init__(
+        self,
+        scale,
+        translate_percent,
+        rotate,
+        shear,
+        alpha=3,
+        sigma=50,
+        channel_shuffle_p=0.5,
+        elastic_p=1.0,
+        p=1.0,
+    ):
+        self.aug = A.Compose(
+            [
+                A.OneOf([A.Sharpen(p=0.5), A.MotionBlur(p=0.5)], p=0.5),
+                A.ElasticTransform(
+                    alpha=alpha,
+                    sigma=sigma,
+                    alpha_affine=0,
+                    p=elastic_p,
+                    interpolation=cv2.INTER_CUBIC,
+                    border_mode=cv2.BORDER_CONSTANT,
+                ),
+                A.ChannelShuffle(p=channel_shuffle_p),
+                A.Affine(
+                    scale=scale,
+                    translate_percent=translate_percent,
+                    rotate=rotate,
+                    shear=shear,
+                    p=p,
+                ),
+                ToTensorV2(),
+            ]
+        )
+
+
 class CombinedV1Multiple(TransformFactory):
     def __init__(self, scale, translate_percent, rotate, shear, channel_shuffle_p, p):
         self.aug = []
@@ -87,6 +124,7 @@ class CombinedV1Multiple(TransformFactory):
                 )
             )
 
+
 def gaussian_heatmap(width, height, center, std_dev):
     """
     Args:
@@ -107,10 +145,10 @@ def center_gauss_masking(image, std_dev=15, **kwargs):
     heatmap = gaussian_heatmap(
         image.shape[1], image.shape[0], (image.shape[1] // 2, image.shape[0] // 2), std_dev
     ).numpy()
-    return image * heatmap[...,None]
+    return image * heatmap[..., None]
 
 
-class CombinedV2(TransformFactory):
+class CombinedV3(TransformFactory):
     def __init__(self, scale, translate_percent, rotate, shear, channel_shuffle_p=0.5, p=1.0):
         self.aug = A.Compose(
             [
@@ -144,6 +182,7 @@ class NoAugMultiple(TransformFactory):
 
 def ch_revert(image, **kwargs):
     return image[..., ::-1]
+
 
 class CombinedChRevert(TransformFactory):
     def __init__(self, scale, translate_percent, rotate, shear, p=1.0):
