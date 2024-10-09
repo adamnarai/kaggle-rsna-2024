@@ -1,0 +1,97 @@
+project_name: rsna-2024
+seed: 42
+debug: False
+deterministic: True
+benchmark: False
+
+# Wandb
+use_wandb: True
+tags:
+  - study_roi
+notes: ''
+
+labels:
+  Normal/Mild: 0
+  Moderate: 1
+  Severe: 2
+
+model:
+  type: StudyROIModel
+  args:
+    base_model: resnet18
+    num_classes: 75
+    in_channels: [1, 1, 1]
+    pretrained: True
+    rnn_hidden_size: 128
+
+dataset:
+  type: StudyROIDataset
+  args:
+    img_num: [5, 5, 5]
+    roi_size: 50
+    resolution: 128
+    data_dir: data/raw
+
+data_loader:
+  type: BaseDataLoader
+  args:
+    batch_size: 16
+    num_workers: 8
+    pin_memory: True
+    shuffle: True
+
+train_transform:
+  type: CombinedV1Multiple
+  args:
+    scale: 
+      - [1, 1]
+      - [1, 1]
+      - [1, 1]
+    translate_percent: 
+      - [0, 0]
+      - [0, 0]
+      - [0, 0]
+    rotate: 
+      - [-15, 15]
+      - [-15, 15]
+      - [-15, 15]
+    shear: 
+      - {'x': [-15, 15], 'y': [-15, 15]}
+      - {'x': [-15, 15], 'y': [-15, 15]}
+      - {'x': [-15, 15], 'y': [-15, 15]}
+    p: 
+      - 1.0
+      - 1.0
+      - 1.0
+    channel_shuffle_p:
+      - 0
+      - 0
+      - 0.5
+
+valid_transform:
+  type: NoAugMultiple
+  args:
+    dummy: [0, 0, 0]
+
+optimizer:
+  type: AdamW
+  args:
+    lr: 0.001
+
+loss:
+  type: RSNACrossEntropyLoss
+  args:
+    weight: [1.0, 2.0, 4.0]
+
+scheduler:
+  type: CosineAnnealingLR
+  args:
+    T_max: 10
+
+trainer:
+  epochs: 10
+  cv_fold: 5
+  one_fold: False
+  freeze_epochs: 0
+  metrics: ['loss']
+  type: standard

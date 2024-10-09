@@ -1,5 +1,5 @@
 import torch
-from torch.nn import MSELoss, CrossEntropyLoss
+from torch.nn import CrossEntropyLoss
 
 
 class RSNACrossEntropyLoss(CrossEntropyLoss):

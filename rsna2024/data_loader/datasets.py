@@ -1089,3 +1089,141 @@ class GlobalROIDataset(ROIDataset):
             )
         elif self.phase in ['test']:
             return sagt2_roi, sagt1_left_roi, sagt1_right_roi, axi_left_roi, axi_right_roi, level, 0
+        
+        
+class StudyROIDataset(ROIDataset):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+        self.df = self.df_orig
+
+    def __getitem__(self, idx):
+        row = self.df.iloc[idx]
+        
+        sagt2_roi_levels = []
+        sagt1_left_roi_levels = []
+        sagt1_right_roi_levels = []
+        axi_left_roi_levels = []
+        axi_right_roi_levels = []
+        
+        for level in self.levels:
+            # Sagittal T2/STIR ROI
+            sagt2_x_norm, sagt2_y_norm, _, sagt2_series_id = self.get_sagt2_coord(
+                row.study_id, level
+            )
+            sagt2_roi = self.get_roi(
+                study_id=row.study_id,
+                series_id=sagt2_series_id,
+                img_num=self.img_num[0],
+                resolution=self.resolution,
+                roi_size=self.roi_size,
+                x_norm=sagt2_x_norm,
+                y_norm=sagt2_y_norm,
+                instance_number_type='middle',
+                resample_slice_spacing=self.resample_slice_spacing,
+            )
+
+            for side in ['left', 'right']:
+                # Sagittal T1 ROI
+                sagt1_x_norm, sagt1_y_norm, _, sagt1_series_id = self.get_sagt1_coord(
+                    row.study_id, level, side
+                )
+
+                sagt1_level_instance_number = {
+                    'l1_l2': 14.9,
+                    'l2_l3': 15.7,
+                    'l3_l4': 16.7,
+                    'l4_l5': 17.8,
+                    'l5_s1': 18.9,
+                }
+                sagt1_instance_number = sagt1_level_instance_number[level]
+                if side == 'right':
+                    sagt1_instance_number = -1 * sagt1_instance_number
+
+                sagt1_roi = self.get_roi(
+                    study_id=row.study_id,
+                    series_id=sagt1_series_id,
+                    img_num=self.img_num[1],
+                    resolution=self.resolution,
+                    roi_size=self.roi_size,
+                    x_norm=sagt1_x_norm,
+                    y_norm=sagt1_y_norm,
+                    instance_number_type='centered_mm',
+                    instance_number=sagt1_instance_number,
+                    resample_slice_spacing=self.resample_slice_spacing,
+                )
+                if side == 'left':
+                    sagt1_left_roi = sagt1_roi
+                elif side == 'right':
+                    sagt1_right_roi = sagt1_roi
+
+                # Axial T2 ROI
+                axi_x_norm, axi_y_norm, axi_instance_number, axi_series_id = self.get_axi_coord(
+                    row.study_id, level, side
+                )
+
+                axi_roi = self.get_roi(
+                    study_id=row.study_id,
+                    series_id=axi_series_id,
+                    img_num=self.img_num[2],
+                    resolution=self.resolution,
+                    roi_size=self.roi_size,
+                    x_norm=axi_x_norm,
+                    y_norm=axi_y_norm,
+                    instance_number_type='filename',
+                    instance_number=axi_instance_number,
+                    resample_slice_spacing=self.resample_slice_spacing,
+                )
+
+                # Flip if right side
+                if side == 'left':
+                    axi_left_roi = axi_roi
+                elif side == 'right':
+                    axi_right_roi = np.flip(axi_roi, axis=1).copy()
+            
+            sagt2_roi_levels.append(sagt2_roi)
+            sagt1_left_roi_levels.append(sagt1_left_roi)
+            sagt1_right_roi_levels.append(sagt1_right_roi)
+            axi_left_roi_levels.append(axi_left_roi)
+            axi_right_roi_levels.append(axi_right_roi)
+            
+        sagt2_roi = np.concatenate(sagt2_roi_levels, axis=2)
+        sagt1_left_roi = np.concatenate(sagt1_left_roi_levels, axis=2)
+        sagt1_right_roi = np.concatenate(sagt1_right_roi_levels, axis=2)
+        axi_left_roi = np.concatenate(axi_left_roi_levels, axis=2)
+        axi_right_roi = np.concatenate(axi_right_roi_levels, axis=2)
+
+        if self.transform:
+            sagt2_roi = self.transform[0](image=sagt2_roi)['image']
+            sagt1_left_roi = self.transform[1](image=sagt1_left_roi)['image']
+            sagt1_right_roi = self.transform[1](image=sagt1_right_roi)['image']
+            axi_left_roi = self.transform[2](image=axi_left_roi)['image']
+            axi_right_roi = self.transform[2](image=axi_right_roi)['image']
+            
+        sagt2_roi = sagt2_roi.reshape(-1, 5, sagt2_roi.shape[1], sagt2_roi.shape[2])
+        sagt1_left_roi = sagt1_left_roi.reshape(-1, 5, sagt1_left_roi.shape[1], sagt1_left_roi.shape[2])
+        sagt1_right_roi = sagt1_right_roi.reshape(-1, 5, sagt1_right_roi.shape[1], sagt1_right_roi.shape[2])
+        axi_left_roi = axi_left_roi.reshape(-1, 5, axi_left_roi.shape[1], axi_left_roi.shape[2])
+        axi_right_roi = axi_right_roi.reshape(-1, 5, axi_right_roi.shape[1], axi_right_roi.shape[2])
+
+        if self.phase in ['train', 'valid', 'predict', 'valid_check']:
+            label = self.get_label(
+                idx,
+                (
+                    [f'spinal_canal_stenosis_{level}' for level in self.levels] +
+                    [f'left_neural_foraminal_narrowing_{level}' for level in self.levels] +
+                    [f'right_neural_foraminal_narrowing_{level}' for level in self.levels] +
+                    [f'left_subarticular_stenosis_{level}' for level in self.levels] +
+                    [f'right_subarticular_stenosis_{level}' for level in self.levels]
+                ),
+            )
+            return (
+                sagt2_roi,
+                sagt1_left_roi,
+                sagt1_right_roi,
+                axi_left_roi,
+                axi_right_roi,
+                label,
+            )
+        elif self.phase in ['test']:
+            return sagt2_roi, sagt1_left_roi, sagt1_right_roi, axi_left_roi, axi_right_roi, 0

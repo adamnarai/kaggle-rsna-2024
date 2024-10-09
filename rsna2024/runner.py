@@ -270,8 +270,8 @@ class Runner(RunnerBase):
 
         return preds, ys, data
 
-    def get_sample_batch(self):
-        data_loader = self.get_dataloader(self.df, phase='train')
+    def get_sample_batch(self, phase='train'):
+        data_loader = self.get_dataloader(self.df, phase=phase)
         return next(iter(data_loader))
     
     def get_data_loader(self, phase='train'):
