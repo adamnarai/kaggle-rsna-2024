@@ -27,11 +27,7 @@ setup(
     description="https://www.kaggle.com/competitions/rsna-2024-lumbar-spine-degenerative-classification",
     long_description=read("README.rst"),
     packages=find_packages(exclude=("tests",)),
-    entry_points={
-        "console_scripts": [
-            "rsna2024=rsna2024.cli:cli"
-        ]
-    },
+    entry_points={"console_scripts": ["rsna2024=rsna2024.cli:cli"]},
     install_requires=requirements,
     classifiers=[
         "Programming Language :: Python",
