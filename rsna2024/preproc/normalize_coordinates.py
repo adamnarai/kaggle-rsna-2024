@@ -18,6 +18,7 @@ condition = df['condition'].str.replace(' ', '_').str.lower()
 level = df['level'].str.replace('/', '_').str.lower()
 df['row_id'] = condition + '_' + level
 
+
 def normalize(s):
     dcm_folder = os.path.join(raw_data_dir, 'train_images', s.study_id, s.series_id)
     dcm_files = natural_sort(os.listdir(dcm_folder))
@@ -32,8 +33,18 @@ def normalize(s):
         slice_dir = 0
     else:
         slice_dir = 1
-    return [s.x/ds.Columns, s.y/ds.Rows, dcm_files.index(filename)/file_num, file_num, int(ds.InstanceNumber), slice_dir]
+    return [
+        s.x / ds.Columns,
+        s.y / ds.Rows,
+        dcm_files.index(filename) / file_num,
+        file_num,
+        int(ds.InstanceNumber),
+        slice_dir,
+    ]
 
-df[['x_norm', 'y_norm', 'instance_number_norm', 'file_num', 'dcm_instance_number', 'slice_dir']] = df.apply(normalize, axis=1, result_type='expand')
+
+df[['x_norm', 'y_norm', 'instance_number_norm', 'file_num', 'dcm_instance_number', 'slice_dir']] = (
+    df.apply(normalize, axis=1, result_type='expand')
+)
 
 df.to_csv(out_path, index=False)

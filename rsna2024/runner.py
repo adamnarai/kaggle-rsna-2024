@@ -31,8 +31,8 @@ class RunnerBase:
     def get_device(self):
         return torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 
-    def get_instance(self, module, name, cfg, *args, **kwargs):        
-        
+    def get_instance(self, module, name, cfg, *args, **kwargs):
+
         # Make weight values torch.tensor
         cfg_kvargs = cfg[name]['args'].copy()
         for k, v in cfg_kvargs.items():
@@ -40,7 +40,7 @@ class RunnerBase:
                 cfg_kvargs[k] = torch.tensor(v).to(self.device)
 
         return getattr(module, cfg[name]['type'])(*args, **kwargs, **cfg_kvargs)
-    
+
     def seed_everything(self):
         seed = self.cfg['seed']
         random.seed(seed)
@@ -53,11 +53,18 @@ class RunnerBase:
 
     def init_wandb(self, project_name_prefix=''):
         wandb.login()
-        run = wandb.init(project='{}{}'.format(project_name_prefix, self.cfg['project_name']), config=self.cfg, tags=self.cfg['tags'], notes=self.cfg['notes'])
+        run = wandb.init(
+            project='{}{}'.format(project_name_prefix, self.cfg['project_name']),
+            config=self.cfg,
+            tags=self.cfg['tags'],
+            notes=self.cfg['notes'],
+        )
         return run
 
     def create_cv_splits(self):
-        kf = KFold(n_splits=self.cfg['trainer']['cv_fold'], random_state=self.cfg['seed'], shuffle=True)
+        kf = KFold(
+            n_splits=self.cfg['trainer']['cv_fold'], random_state=self.cfg['seed'], shuffle=True
+        )
         splits = []
         split_indices = []
         for train_index, valid_index in kf.split(X=self.df):
@@ -69,10 +76,10 @@ class RunnerBase:
         assert os.path.exists(self.model_dir)
         df = pd.DataFrame()
         for i, (df_train, df_validation) in enumerate(splits):
-            df_train.loc[:,'split'] = 'train'
-            df_train.loc[:,'fold'] = i + 1
-            df_validation.loc[:,'split'] = 'validation'
-            df_validation.loc[:,'fold'] = i + 1
+            df_train.loc[:, 'split'] = 'train'
+            df_train.loc[:, 'fold'] = i + 1
+            df_validation.loc[:, 'split'] = 'validation'
+            df_validation.loc[:, 'fold'] = i + 1
             df = pd.concat([df, df_train, df_validation])
         df = df.sort_values(by=['fold', 'split']).reset_index(drop=True)
         df.to_csv(os.path.join(self.model_dir, 'splits.csv'), index=False)
@@ -94,7 +101,7 @@ class RunnerBase:
     def create_model_dir(self, model_name):
         self.model_dir = os.path.join(self.cfg['root'], 'models', model_name)
         os.makedirs(self.model_dir, exist_ok=True)
-        
+
     def get_dataloader(self, df, phase, df_coordinates=None, transform=None):
         if phase in ['valid', 'predict', 'test', 'faketest', 'valid_check']:
             transform_name = 'valid_transform'
@@ -102,10 +109,19 @@ class RunnerBase:
         else:
             transform_name = f'{phase}_transform'
             data_loader_phase = phase
-        
+
         if transform is None:
             transform = self.get_instance(module_aug, transform_name, self.cfg).get_transform()
-        dataset = self.get_instance(module_data, 'dataset', self.cfg, df, root_dir=self.root_dir, df_coordinates=df_coordinates, phase=phase, transform=transform)
+        dataset = self.get_instance(
+            module_data,
+            'dataset',
+            self.cfg,
+            df,
+            root_dir=self.root_dir,
+            df_coordinates=df_coordinates,
+            phase=phase,
+            transform=transform,
+        )
         return self.get_instance(module_data, 'data_loader', self.cfg, dataset, data_loader_phase)
 
     def train_model(self, df_train, df_valid, state_filename, validate=True):
@@ -117,32 +133,63 @@ class RunnerBase:
         valid_loader = self.get_dataloader(df_valid, phase='valid')
 
         # Training
-        trainer = Trainer(model, train_loader, valid_loader, self.loss_fn, optimizer, scheduler, self.device, state_filename=state_filename, wandb_log=self.cfg['use_wandb'], 
-                          num_epochs=self.cfg['trainer']['epochs'], metrics=self.cfg['trainer']['metrics'], trainer_type=self.cfg['trainer']['type'])
+        trainer = Trainer(
+            model,
+            train_loader,
+            valid_loader,
+            self.loss_fn,
+            optimizer,
+            scheduler,
+            self.device,
+            state_filename=state_filename,
+            wandb_log=self.cfg['use_wandb'],
+            num_epochs=self.cfg['trainer']['epochs'],
+            metrics=self.cfg['trainer']['metrics'],
+            trainer_type=self.cfg['trainer']['type'],
+        )
         trainer.train_epochs(num_epochs=self.cfg['trainer']['epochs'], validate=validate)
         trainer.save_state(state_filename)
 
         return trainer
-    
+
     def validate_model(self, df_valid, state_filename):
         model = self.get_instance(module_model, 'model', self.cfg).to(self.device)
 
         valid_loader = self.get_dataloader(df_valid, phase='valid')
 
         # Training
-        trainer = Trainer(model, None, valid_loader, self.loss_fn, device=self.device, metrics=self.cfg['trainer']['metrics'], trainer_type=self.cfg['trainer']['type'])
+        trainer = Trainer(
+            model,
+            None,
+            valid_loader,
+            self.loss_fn,
+            device=self.device,
+            metrics=self.cfg['trainer']['metrics'],
+            trainer_type=self.cfg['trainer']['type'],
+        )
         trainer.load_state(state_filename)
         valid_loss, metrics = trainer.validate()
 
         return valid_loss, metrics
-    
-    def get_predictions(self, df, state_filename, df_coordinates=None, transform=None, id_var_num=0):
+
+    def get_predictions(
+        self, df, state_filename, df_coordinates=None, transform=None, id_var_num=0
+    ):
         model = self.get_instance(module_model, 'model', self.cfg).to(self.device)
-        
-        valid_loader = self.get_dataloader(df, phase='predict', df_coordinates=df_coordinates, transform=transform)
+
+        valid_loader = self.get_dataloader(
+            df, phase='predict', df_coordinates=df_coordinates, transform=transform
+        )
 
         # Training
-        trainer = Trainer(model, None, valid_loader, self.loss_fn, device=self.device, metrics=self.cfg['trainer']['metrics'])
+        trainer = Trainer(
+            model,
+            None,
+            valid_loader,
+            self.loss_fn,
+            device=self.device,
+            metrics=self.cfg['trainer']['metrics'],
+        )
         trainer.load_state(state_filename)
         output = trainer.predict(id_var_num=id_var_num)
 
@@ -216,7 +263,9 @@ class Runner(RunnerBase):
                 state_filename_suffix = ''
             else:
                 raise ValueError('state_type must be "best" or "last"')
-            state_filename = os.path.join(self.model_dir, f'{self.model_name}-cv{cv+1}{state_filename_suffix}.pt')
+            state_filename = os.path.join(
+                self.model_dir, f'{self.model_name}-cv{cv+1}{state_filename_suffix}.pt'
+                )
             valid_loss, metrics = self.validate_model(df_valid, state_filename)
             metric_list.append(metrics)
             print(f'valid loss: {valid_loss:.4f}, {metrics}\n')
@@ -243,12 +292,25 @@ class Runner(RunnerBase):
                 state_filename_suffix = ''
             else:
                 raise ValueError('state_type must be "best" or "last"')
-            state_filename = os.path.join(self.model_dir, f'{self.model_name}-cv{cv+1}{state_filename_suffix}.pt')
+            state_filename = os.path.join(
+                self.model_dir, f'{self.model_name}-cv{cv+1}{state_filename_suffix}.pt')
             if oof:
-                output = self.get_predictions(df_valid, state_filename, df_coordinates=df_coordinates, transform=transform, id_var_num=id_var_num)
+                output = self.get_predictions(
+                    df_valid, 
+                    state_filename, 
+                    df_coordinates=df_coordinates, 
+                    transform=transform, 
+                    id_var_num=id_var_num
+                )
                 data = pd.concat([data, df_valid])
             else:
-                output = self.get_predictions(df_train, state_filename, df_coordinates=df_coordinates, transform=transform, id_var_num=id_var_num)
+                output = self.get_predictions(
+                    df_train, 
+                    state_filename, 
+                    df_coordinates=df_coordinates, 
+                    transform=transform, 
+                    id_var_num=id_var_num
+                )
                 data = pd.concat([data, df_train])
             if id_var_num > 0:
                 id_var = output[-id_var_num:]

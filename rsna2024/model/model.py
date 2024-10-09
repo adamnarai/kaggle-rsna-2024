@@ -301,5 +301,5 @@ class StudyROIModel(nn.Module):
 
         output_tokens = self.transformer_encoder(input_tokens)
         preds = self.classifier(output_tokens).swapaxes(1, 2).flatten(1, 2)
-        
+
         return preds

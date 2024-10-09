@@ -23,7 +23,7 @@ from rsna2024.utils import natural_sort, sagi_coord_to_axi_instance_number, get_
 # Params
 sagt2_model_name = 'glad-moon-593'  #'glad-moon-593'
 sagt1_model_name = 'leafy-cherry-654'  #'leafy-cherry-654'
-axi_model_name = 'scarlet-feather-603' #'scarlet-feather-603'
+axi_model_name = 'scarlet-feather-603'  #'scarlet-feather-603'
 out_filename = 'train_label_coordinates_predicted_v2_{}_{}_{}.csv'.format(
     sagt2_model_name.split('-')[-1], sagt1_model_name.split('-')[-1], axi_model_name.split('-')[-1]
 )
@@ -54,8 +54,7 @@ def get_sagi2axi_data(study_id, series_id):
     if axi_series is None:
         return None, None
     axi_dir_list = [
-        os.path.join(img_dir, str(study_id), str(axi_series_id))
-        for axi_series_id in axi_series
+        os.path.join(img_dir, str(study_id), str(axi_series_id)) for axi_series_id in axi_series
     ]
     if os.path.isdir(sag_dir) and len(axi_dir_list) != 0:
         sag_file_list = natural_sort(os.listdir(sag_dir))
@@ -76,6 +75,7 @@ def get_coord_from_heatmap_pred(pred, i, idx):
     x_norm = x_coord / predi.shape[1]
     y_norm = y_coord / predi.shape[0]
     return x_norm, y_norm
+
 
 # Sagittal T2/STIR coordinates
 print('\nPredicting Sagittal T2/STIR coordinates and Axial T2 instance numbers...')
@@ -138,9 +138,9 @@ del kp_sagt2_preds, kp_sagt2_ys, kp_sagt2_data
 # Sagittal T1 coordinates
 print('\nPredicting Sagittal T1 coordinates...')
 cfg = load_config(os.path.join(root_dir, 'models', 'rsna-2024-' + sagt1_model_name, 'config.json'))
-kp_sagt1_preds, kp_sagt1_ys, kp_sagt1_data, kp_sagt1_study_id, kp_sagt1_series_id, kp_sagt1_side = Runner(
-    cfg, model_name='rsna-2024-' + sagt1_model_name
-).predict(id_var_num=3)
+kp_sagt1_preds, kp_sagt1_ys, kp_sagt1_data, kp_sagt1_study_id, kp_sagt1_series_id, kp_sagt1_side = (
+    Runner(cfg, model_name='rsna-2024-' + sagt1_model_name).predict(id_var_num=3)
+)
 
 coord_df_list = []
 for i in tqdm(range(len(kp_sagt1_preds))):
@@ -149,10 +149,10 @@ for i in tqdm(range(len(kp_sagt1_preds))):
     if series_id == '':
         series_id = np.nan
     side = kp_sagt1_side[i]
-    
+
     for level_idx, level in enumerate(levels):
         x_norm, y_norm = get_coord_from_heatmap_pred(kp_sagt1_preds, i, level_idx)
-        
+
         coord_df_list.append(
             {
                 'study_id': study_id,

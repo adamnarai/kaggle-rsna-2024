@@ -10,8 +10,23 @@ import wandb
 
 from rsna2024.utils import rsna_lumbar_metric
 
+
 class Trainer:
-    def __init__(self, model, train_loader, valid_loader, loss_fn, optimizer=None, scheduler=None, device=None, state_filename=None, metrics=None, num_epochs=None, wandb_log=False, trainer_type='standard'):
+    def __init__(
+        self,
+        model,
+        train_loader,
+        valid_loader,
+        loss_fn,
+        optimizer=None,
+        scheduler=None,
+        device=None,
+        state_filename=None,
+        metrics=None,
+        num_epochs=None,
+        wandb_log=False,
+        trainer_type='standard',
+    ):
         self.model = model
         self.train_dataloader = train_loader
         self.valid_dataloader = valid_loader
@@ -47,7 +62,9 @@ class Trainer:
                 self.last_metric = main_metric
                 if main_metric < self.best_metric:
                     self.best_metric = main_metric
-                    print(f"New best loss: {self.best_metric:.4f}\nSaving model to {self.state_filename}")
+                    print(
+                        f"New best loss: {self.best_metric:.4f}\nSaving model to {self.state_filename}"
+                    )
                     self.save_state(self.state_filename.replace('.pt', '_best.pt'))
             else:
                 test_loss = np.nan
@@ -125,40 +142,50 @@ class Trainer:
 
         y_pool = torch.cat(y_pool, dim=0)
         pred_pool = torch.cat(pred_pool, dim=0)
-        
+
         valid_loss /= num_batches
         if 'loss' in metrics.keys():
             metrics['loss'] = valid_loss
-        
-        if 'heatmap_peak_mse' in metrics.keys():   
+
+        if 'heatmap_peak_mse' in metrics.keys():
             coord_true = torch.zeros((y_pool.shape[0], y_pool.shape[1], 2)).to(self.device)
             coord_pred = coord_true.clone().to(self.device)
             for i in range(y_pool.shape[0]):
                 for j in range(y_pool.shape[1]):
-                    y_coord, x_coord = torch.unravel_index(y_pool[i, j].argmax(), y_pool[i, j].shape)
-                    coord_true[i, j] = torch.tensor([x_coord / y_pool[i, j].shape[1], y_coord /  y_pool[i, j].shape[0]])
-                    y_coord, x_coord = torch.unravel_index(pred_pool[i, j].argmax(), pred_pool[i, j].shape)
-                    coord_pred[i, j] = torch.tensor([x_coord / y_pool[i, j].shape[1], y_coord / y_pool[i, j].shape[0]])
-                    
+                    y_coord, x_coord = torch.unravel_index(
+                        y_pool[i, j].argmax(), y_pool[i, j].shape
+                    )
+                    coord_true[i, j] = torch.tensor(
+                        [x_coord / y_pool[i, j].shape[1], y_coord / y_pool[i, j].shape[0]]
+                    )
+                    y_coord, x_coord = torch.unravel_index(
+                        pred_pool[i, j].argmax(), pred_pool[i, j].shape
+                    )
+                    coord_pred[i, j] = torch.tensor(
+                        [x_coord / y_pool[i, j].shape[1], y_coord / y_pool[i, j].shape[0]]
+                    )
+
             metrics['heatmap_peak_mse'] = F.mse_loss(coord_pred, coord_true).item()
 
         if 'rsna_lumbar_metric' in metrics.keys():
             solution, submission = rsna_lumbar_metric.prepare_data(y_pool, pred_pool)
-            metrics['rsna_lumbar_metric'] = (
-                rsna_lumbar_metric.score(
-                    solution=solution,
-                    submission=submission,
-                    row_id_column_name='row_id',
-                    any_severe_scalar=1.0,
-                )
+            metrics['rsna_lumbar_metric'] = rsna_lumbar_metric.score(
+                solution=solution,
+                submission=submission,
+                row_id_column_name='row_id',
+                any_severe_scalar=1.0,
             )
-            
+
         if 'detailed_loss' in metrics.keys():
             weights = torch.tensor([1.0, 2.0, 4.0]).to(self.device)
             detailed_loss_fn = nn.CrossEntropyLoss(weight=weights, reduction='none').to(self.device)
-            detailed_loss = detailed_loss_fn(torch.unflatten(pred_pool, 1, [3, -1]), y_pool).to('cpu').numpy()
+            detailed_loss = (
+                detailed_loss_fn(torch.unflatten(pred_pool, 1, [3, -1]), y_pool).to('cpu').numpy()
+            )
             detailed_loss = detailed_loss.sum(axis=0)
-            detailed_loss = detailed_loss * len(detailed_loss) / weights[y_pool].sum().to('cpu').numpy()  # Reproduce 'mean' reduction
+            detailed_loss = (
+                detailed_loss * len(detailed_loss) / weights[y_pool].sum().to('cpu').numpy()
+            )  # Reproduce 'mean' reduction
             metrics['detailed_loss'] = detailed_loss
 
         return valid_loss, metrics
