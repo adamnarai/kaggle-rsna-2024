@@ -261,9 +261,11 @@ class CoordDataset(DatasetBase):
     ):
         # Zero image
         x = np.zeros((self.resolution, self.resolution, self.img_num), dtype=np.float32)
-        if pd.isnull(series_id) or (instance_number_type != 'middle' and pd.isnull(instance_number)):
+        if pd.isnull(series_id) or (
+            instance_number_type != 'middle' and pd.isnull(instance_number)
+        ):
             return x
-        
+
         # Get all dcm files in series
         series_dir = os.path.join(self.img_dir, str(study_id), str(series_id))
         file_list = natural_sort(os.listdir(series_dir))
@@ -310,11 +312,11 @@ class CoordDataset(DatasetBase):
                 )
             except Exception as e:
                 start_index = slice_num // 2 - self.img_num // 2
-                
+
         # Augment instance number during training
         if self.rand_instance_number_offsets is not None and self.phase in ['train']:
             start_index += random.sample(self.rand_instance_number_offsets, 1)[0]
-        
+
         start_index = min(max(start_index, 0), slice_num)
         end_index = min(start_index + self.img_num, slice_num)
         file_list = file_list[start_index:end_index]
@@ -575,7 +577,7 @@ class ROIDataset(DatasetBase):
             resample_slice_spacing=resample_slice_spacing,
             transform=transform,
         )
-            
+
         self.df_orig = df
         self.df = pd.wide_to_long(
             df,
@@ -592,7 +594,6 @@ class ROIDataset(DatasetBase):
             suffix=r'\w+',
         ).reset_index()
         self.roi_size = roi_size
-
 
     def get_sagt2_coord(self, study_id, level):
         coords = self.df_coordinates[
@@ -682,9 +683,14 @@ class ROIDataset(DatasetBase):
     ):
         # Zero image
         x = np.zeros((resolution, resolution, img_num), dtype=np.float32)
-        if pd.isnull(series_id) or pd.isnull(x_norm) or pd.isnull(y_norm) or (instance_number_type != 'middle' and pd.isnull(instance_number)):
+        if (
+            pd.isnull(series_id)
+            or pd.isnull(x_norm)
+            or pd.isnull(y_norm)
+            or (instance_number_type != 'middle' and pd.isnull(instance_number))
+        ):
             return x
-        
+
         # Get all dcm files in series
         series_dir = os.path.join(self.img_dir, str(study_id), str(series_id))
         file_list = natural_sort(os.listdir(series_dir))
@@ -1089,8 +1095,8 @@ class GlobalROIDataset(ROIDataset):
             )
         elif self.phase in ['test']:
             return sagt2_roi, sagt1_left_roi, sagt1_right_roi, axi_left_roi, axi_right_roi, level, 0
-        
-        
+
+
 class StudyROIDataset(ROIDataset):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -1099,13 +1105,13 @@ class StudyROIDataset(ROIDataset):
 
     def __getitem__(self, idx):
         row = self.df.iloc[idx]
-        
+
         sagt2_roi_levels = []
         sagt1_left_roi_levels = []
         sagt1_right_roi_levels = []
         axi_left_roi_levels = []
         axi_right_roi_levels = []
-        
+
         for level in self.levels:
             # Sagittal T2/STIR ROI
             sagt2_x_norm, sagt2_y_norm, _, sagt2_series_id = self.get_sagt2_coord(
@@ -1180,13 +1186,13 @@ class StudyROIDataset(ROIDataset):
                     axi_left_roi = axi_roi
                 elif side == 'right':
                     axi_right_roi = np.flip(axi_roi, axis=1).copy()
-            
+
             sagt2_roi_levels.append(sagt2_roi)
             sagt1_left_roi_levels.append(sagt1_left_roi)
             sagt1_right_roi_levels.append(sagt1_right_roi)
             axi_left_roi_levels.append(axi_left_roi)
             axi_right_roi_levels.append(axi_right_roi)
-            
+
         sagt2_roi = np.concatenate(sagt2_roi_levels, axis=2)
         sagt1_left_roi = np.concatenate(sagt1_left_roi_levels, axis=2)
         sagt1_right_roi = np.concatenate(sagt1_right_roi_levels, axis=2)
@@ -1199,10 +1205,14 @@ class StudyROIDataset(ROIDataset):
             sagt1_right_roi = self.transform[1](image=sagt1_right_roi)['image']
             axi_left_roi = self.transform[2](image=axi_left_roi)['image']
             axi_right_roi = self.transform[2](image=axi_right_roi)['image']
-            
+
         sagt2_roi = sagt2_roi.reshape(-1, 5, sagt2_roi.shape[1], sagt2_roi.shape[2])
-        sagt1_left_roi = sagt1_left_roi.reshape(-1, 5, sagt1_left_roi.shape[1], sagt1_left_roi.shape[2])
-        sagt1_right_roi = sagt1_right_roi.reshape(-1, 5, sagt1_right_roi.shape[1], sagt1_right_roi.shape[2])
+        sagt1_left_roi = sagt1_left_roi.reshape(
+            -1, 5, sagt1_left_roi.shape[1], sagt1_left_roi.shape[2]
+        )
+        sagt1_right_roi = sagt1_right_roi.reshape(
+            -1, 5, sagt1_right_roi.shape[1], sagt1_right_roi.shape[2]
+        )
         axi_left_roi = axi_left_roi.reshape(-1, 5, axi_left_roi.shape[1], axi_left_roi.shape[2])
         axi_right_roi = axi_right_roi.reshape(-1, 5, axi_right_roi.shape[1], axi_right_roi.shape[2])
 
@@ -1210,11 +1220,11 @@ class StudyROIDataset(ROIDataset):
             label = self.get_label(
                 idx,
                 (
-                    [f'spinal_canal_stenosis_{level}' for level in self.levels] +
-                    [f'left_neural_foraminal_narrowing_{level}' for level in self.levels] +
-                    [f'right_neural_foraminal_narrowing_{level}' for level in self.levels] +
-                    [f'left_subarticular_stenosis_{level}' for level in self.levels] +
-                    [f'right_subarticular_stenosis_{level}' for level in self.levels]
+                    [f'spinal_canal_stenosis_{level}' for level in self.levels]
+                    + [f'left_neural_foraminal_narrowing_{level}' for level in self.levels]
+                    + [f'right_neural_foraminal_narrowing_{level}' for level in self.levels]
+                    + [f'left_subarticular_stenosis_{level}' for level in self.levels]
+                    + [f'right_subarticular_stenosis_{level}' for level in self.levels]
                 ),
             )
             return (
