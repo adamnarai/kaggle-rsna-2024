@@ -48,6 +48,7 @@ train_transform:
     rotate: [-15, 15]
     shear: {'x': [-15, 15], 'y': [-15, 15]}
     p: 1.0
+    channel_shuffle_p: 0.5
 
 valid_transform:
   type: NoAug
@@ -71,5 +72,5 @@ trainer:
   epochs: 30
   cv_fold: 5
   one_fold: False
-  metrics: ['loss', 'heatmap_peak_mse']
+  metrics: ['loss']
   type: standard

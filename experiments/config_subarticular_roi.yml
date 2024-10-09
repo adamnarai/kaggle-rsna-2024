@@ -16,22 +16,20 @@ labels:
   Severe: 2
 
 model:
-  type: SubarticularROIModelV3
+  type: SubarticularROIModel
   args:
     base_model: resnet18
     num_classes: 3
-    in_channels: [1, 1]
+    in_channels: 1
     pretrained: True
 
 dataset:
-  type: SubarticularROIDatasetV3
+  type: SubarticularROIDataset
   args:
-    img_num: [5, 5]
+    img_num: 5
     roi_size: 50
     resolution: 128
     data_dir: data/raw
-    # coord_inpute_file: train_label_coordinates_predicted_778_806_810
-    # resample_slice_spacing: 4.4
 
 data_loader:
   type: BaseDataLoader
@@ -49,6 +47,7 @@ train_transform:
     rotate: [-15, 15]
     shear: {'x': [-15, 15], 'y': [-15, 15]}
     p: 1.0
+    channel_shuffle_p: 0.5
 
 valid_transform:
   type: NoAug

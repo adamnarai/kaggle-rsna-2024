@@ -21,12 +21,12 @@ model:
     base_model: DeepLabV3Plus
     encoder_name: resnet34
     num_classes: 5
-    in_channels: 4
+    in_channels: 3
 
 dataset:
   type: Sagt1CoordDataset
   args:
-    img_num: 4
+    img_num: 3
     heatmap_std: 10
     resolution: 512
     data_dir: data/raw
@@ -41,13 +41,14 @@ data_loader:
     shuffle: True
 
 train_transform:
-  type: CombinedChRevert
+  type: CombinedV1
   args:
     scale: [1, 1]
     translate_percent: [0, 0]
     rotate: [-15, 15]
     shear: {'x': [-15, 15], 'y': [-15, 15]}
     p: 1.0
+    channel_shuffle_p: 0.5
 
 valid_transform:
   type: NoAug
@@ -71,5 +72,5 @@ trainer:
   epochs: 20
   cv_fold: 5
   one_fold: False
-  metrics: ['loss', 'heatmap_peak_mse']
+  metrics: ['loss']
   type: standard

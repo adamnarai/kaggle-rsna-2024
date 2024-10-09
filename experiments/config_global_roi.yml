@@ -30,7 +30,6 @@ dataset:
     roi_size: 50
     resolution: 128
     data_dir: data/raw
-    coord_impute_file: train_label_coordinates_predicted_593_654_603
 
 data_loader:
   type: BaseDataLoader
@@ -83,14 +82,19 @@ loss:
   args:
     weight: [1.0, 2.0, 4.0]
 
+# scheduler:
+#   type: StepLR
+#   args:
+#     step_size: 2
+#     gamma: 0.1
+
 scheduler:
-  type: StepLR
+  type: CosineAnnealingLR
   args:
-    step_size: 2
-    gamma: 0.1
+    T_max: 5
 
 trainer:
-  epochs: 3
+  epochs: 5
   cv_fold: 5
   one_fold: False
   freeze_epochs: 0
