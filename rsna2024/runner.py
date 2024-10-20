@@ -3,6 +3,7 @@ import random
 import json
 import numpy as np
 import pandas as pd
+import datetime
 from sklearn.model_selection import KFold
 
 import torch
@@ -51,13 +52,14 @@ class RunnerBase:
         torch.backends.cudnn.deterministic = self.cfg['deterministic']
         torch.backends.cudnn.benchmark = self.cfg['benchmark']
 
-    def init_wandb(self, project_name_prefix=''):
+    def init_wandb(self, project_name_prefix='', name=None):
         wandb.login()
         run = wandb.init(
             project='{}{}'.format(project_name_prefix, self.cfg['project_name']),
             config=self.cfg,
             tags=self.cfg['tags'],
             notes=self.cfg['notes'],
+            name=name,
         )
         return run
 
@@ -214,7 +216,7 @@ class Runner(RunnerBase):
             run = self.init_wandb(project_name_prefix='kaggle-')
             run_name = run.name
         else:
-            run_name = 'debug'
+            run_name = '_'.join(self.cfg['tags']) + '_' + datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
         
         # Model dir
         self.model_name = '{}-{}'.format(self.cfg['project_name'], run_name)

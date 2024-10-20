@@ -5,21 +5,8 @@ import pydicom
 
 from rsna2024.utils import natural_sort
 
-root = os.path.abspath(os.path.join(os.path.dirname(__file__), '../..'))
-data_dir = os.path.join(root, 'data')
-raw_data_dir = os.path.join(data_dir, 'raw')
-processed_data_dir = os.path.join(data_dir, 'processed')
-in_path = os.path.join(raw_data_dir, 'train_label_coordinates.csv')
-out_path = os.path.join(processed_data_dir, 'train_label_coordinates.csv')
-os.makedirs(processed_data_dir, exist_ok=True)
 
-df = pd.read_csv(in_path, dtype={'study_id': 'str', 'series_id': 'str'})
-condition = df['condition'].str.replace(' ', '_').str.lower()
-level = df['level'].str.replace('/', '_').str.lower()
-df['row_id'] = condition + '_' + level
-
-
-def normalize(s):
+def normalize(s, raw_data_dir):
     dcm_folder = os.path.join(raw_data_dir, 'train_images', s.study_id, s.series_id)
     dcm_files = natural_sort(os.listdir(dcm_folder))
     file_num = len(dcm_files)
@@ -43,8 +30,26 @@ def normalize(s):
     ]
 
 
-df[['x_norm', 'y_norm', 'instance_number_norm', 'file_num', 'dcm_instance_number', 'slice_dir']] = (
-    df.apply(normalize, axis=1, result_type='expand')
-)
+def normalize_coordinates(root_dir):
+    data_dir = os.path.join(root_dir, 'data')
+    raw_data_dir = os.path.join(data_dir, 'raw')
+    processed_data_dir = os.path.join(data_dir, 'processed')
+    in_path = os.path.join(raw_data_dir, 'train_label_coordinates.csv')
+    out_path = os.path.join(processed_data_dir, 'train_label_coordinates.csv')
+    os.makedirs(processed_data_dir, exist_ok=True)
 
-df.to_csv(out_path, index=False)
+    df = pd.read_csv(in_path, dtype={'study_id': 'str', 'series_id': 'str'})
+    condition = df['condition'].str.replace(' ', '_').str.lower()
+    level = df['level'].str.replace('/', '_').str.lower()
+    df['row_id'] = condition + '_' + level
+
+    df[
+        ['x_norm', 'y_norm', 'instance_number_norm', 'file_num', 'dcm_instance_number', 'slice_dir']
+    ] = df.apply(normalize, axis=1, result_type='expand', raw_data_dir=raw_data_dir)
+
+    df.to_csv(out_path, index=False)
+
+
+if __name__ == '__main__':
+    root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '../..'))
+    normalize_coordinates(root_dir)
