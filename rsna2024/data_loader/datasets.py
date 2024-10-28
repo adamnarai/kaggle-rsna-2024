@@ -234,7 +234,7 @@ class CoordDataset(DatasetBase):
             [series_coords['x_norm'].values, series_coords['y_norm'].values], dtype=np.float32
         ).T
 
-        series_list = series_coords['series_id'].unique().tolist()
+        series_list = series_coords['series_id'].tolist()
         series_id = self.most_frequent(series_list)
 
         if pd.isnull(series_id):
